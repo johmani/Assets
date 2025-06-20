@@ -1,0 +1,6 @@
+[submodule "ThirdParty/entt"]
+	path = ThirdParty/entt
+	url = https://github.com/johmani/entt.git
+[submodule "ThirdParty/cgltf"]
+	path = ThirdParty/cgltf
+	url = https://github.com/johmani/cgltf.git

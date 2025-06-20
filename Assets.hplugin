@@ -1,0 +1,9 @@
+{
+  "name": "Assets",
+  "description": "Assets mangemant system",
+  "URL": "https://github.com/johmani/Assets",
+  "modules": [],
+  "plugins": [],
+  "reloadable": false,
+  "enabledByDefault": true
+}
