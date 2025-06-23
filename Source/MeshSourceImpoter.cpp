@@ -772,6 +772,12 @@ namespace Assets {
         auto path = assetManager->desc.assetsDirectory / metadata.filePath;
         auto filePath = path.lexically_normal().string();
         auto cStrFilePath = filePath.c_str();
+
+        if (!std::filesystem::exists(path))
+        {
+            HE_ERROR("MeshSourceImporter : file {} not exists", cStrFilePath);
+            return nullptr;
+        }
         
         cgltf_options options = {};
         cgltf_data* data = LoadGltfData(options, cStrFilePath);
@@ -837,6 +843,13 @@ namespace Assets {
         HE::Timer t;
 
         auto path = assetManager->desc.assetsDirectory / metadata.filePath;
+
+        if (!std::filesystem::exists(path))
+        {
+            HE_ERROR("MeshSourceImporter : file {} not exists", path.string());
+            return nullptr;
+        }
+
         auto meshSource = &assetManager->meshSources.emplace_back();
         meshSource->state = AssetState::Loading;
 

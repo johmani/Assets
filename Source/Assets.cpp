@@ -71,6 +71,10 @@ namespace Assets {
                 HE_INFO("AssetImporter::ImportAsset [{}][{}][{}ms]", magic_enum::enum_name<AssetType>(metadata.type), metadata.filePath.string(), t.ElapsedMilliseconds());
                 return asset;
             }
+            else
+            {
+                return nullptr;
+            }
         }
 
         HE_ERROR("No importer available for asset : {}", metadata.filePath.string());
@@ -467,10 +471,6 @@ namespace Assets {
                 }
                 
                 asset->handle = handle;
-            }
-            else
-            {
-                HE_ERROR("[AssetManager] : GetAsset {} : asset import failed", (uint64_t)handle);
             }
         }
 
