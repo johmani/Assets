@@ -140,7 +140,7 @@ namespace Assets {
         }
     }
 
-    void ImportTexture(AssetManager* assetManager, Texture* textureAsset, HE::Buffer buffer, nvrhi::IDevice* device, const std::string& name)
+    void ImportTexture(AssetManager* assetManager, Asset asset, HE::Buffer buffer, nvrhi::IDevice* device, const std::string& name)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
@@ -155,21 +155,27 @@ namespace Assets {
         desc.format = nvrhi::Format::RGBA8_UNORM;
         desc.debugName = name;
 
+        Texture& textureAsset = asset.Get<Texture>();
+        auto id = asset.Get<AssetID>().id;
         nvrhi::TextureHandle texture = device->createTexture(desc);
-        textureAsset->texture = texture;
+        textureAsset.texture = texture;
 
-        HE::Jops::SubmitToMainThread([assetManager, device, textureAsset, desc, data, name]() {
+        HE::Jops::SubmitToMainThread([assetManager, device, id, desc, data, name]() {
+
+            auto asset = assetManager->FindAsset(id);
+
+            auto& textureAsset = asset.Get<Texture>();
 
             HE_PROFILE_SCOPE_NC("ImportTexture::SubmitToMainThread", HE_PROFILE_MAIN_THREAD);
 
-            assetManager->AddMemoryOnlyAsset(textureAsset);
+            assetManager->AddMemoryOnlyAsset(asset, AssetType::Texture2D);
 
             auto commandList = device->createCommandList({ .enableImmediateExecution = false });
 
             commandList->open();
-            commandList->beginTrackingTextureState(textureAsset->texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
-            commandList->writeTexture(textureAsset->texture, 0, 0, data, desc.width * 4);
-            commandList->setPermanentTextureState(textureAsset->texture, nvrhi::ResourceStates::ShaderResource);
+            commandList->beginTrackingTextureState(textureAsset.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+            commandList->writeTexture(textureAsset.texture, 0, 0, data, desc.width * 4);
+            commandList->setPermanentTextureState(textureAsset.texture, nvrhi::ResourceStates::ShaderResource);
             commandList->commitBarriers();
             commandList->close();
             device->executeCommandList(commandList);
@@ -177,14 +183,14 @@ namespace Assets {
             commandList.Reset();
 
             std::free(data);
-            textureAsset->state = AssetState::Loaded;
-            assetManager->OnAssetLoaded(textureAsset);
+            asset.Get<AssetState>() = AssetState::Loaded;
+            assetManager->OnAssetLoaded(asset);
 
             assetManager->asyncTaskCount--;
         });
     }
 
-    void AppendMeshes(cgltf_data* data, MeshSource* meshSource, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap, const std::unordered_map<const cgltf_material*, Material*>& materials)
+    void AppendMeshes(cgltf_data* data, MeshSource* meshSource, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap, std::unordered_map<const cgltf_material*, Asset>& materials)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
@@ -597,7 +603,7 @@ namespace Assets {
 
                 if (materials.contains(prim.material))
                 {
-                    geometry.materailHandle = materials.at(prim.material)->handle;
+                    geometry.materailHandle = materials.at(prim.material).Get<AssetID>().id;
                 }
 
                 geometry.mesh = &mesh;
@@ -671,9 +677,7 @@ namespace Assets {
     void AppendMaterials(
         AssetManager* assetManager,
         cgltf_data* data ,
-        std::unordered_map<const cgltf_material*, Material*>& materials,
-        const AssetMetadata& metadata,
-        IndexRange materialsIndexRange,
+        std::unordered_map<const cgltf_material*, Asset>& materials,
         MeshSource* meshSource
     )
     {
@@ -682,56 +686,57 @@ namespace Assets {
         {
             const cgltf_material& cgltfMat = data->materials[i];
 
-            auto material = &assetManager->materials[materialsIndexRange.from + i];
-            materials[&cgltfMat] = material;
-
-            material->name = cgltfMat.name ? cgltfMat.name : "Unnamed Material";
-            HE_INFO("Import Memory Only material [{}][{}]", metadata.filePath.string(), material->name);
+            auto asset = assetManager->CreateAsset(AssetType::Material);
+            auto& assetState = asset.Get<AssetState>();
+            auto& material = asset.Add<Material>();
+            assetState = AssetState::Loading;
+            materials[&cgltfMat] = asset;
+           
+            material.name = cgltfMat.name ? cgltfMat.name : "Unnamed Material";
+            HE_INFO("Import Memory Only material [{}]", material.name);
 
             if (cgltfMat.has_pbr_metallic_roughness)
             {
                 const cgltf_float* base_color = cgltfMat.pbr_metallic_roughness.base_color_factor;
-                material->baseColor = { base_color[0], base_color[1], base_color[2], base_color[3] };
+                material.baseColor = { base_color[0], base_color[1], base_color[2], base_color[3] };
 
                 cgltf_int index = cgltfMat.pbr_metallic_roughness.base_color_texture.texcoord;
-                material->uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
+                material.uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
 
                 if (cgltfMat.pbr_metallic_roughness.base_color_texture.texture)
                 {
                     uint32_t index = uint32_t(cgltfMat.pbr_metallic_roughness.base_color_texture.texture - data->textures);
-                    material->baseTextureHandle = meshSource->GetTextureSpan()[index];
+                    material.baseTextureHandle = meshSource->GetTextureSpan()[index];
                 }
             }
 
             if (cgltfMat.has_pbr_specular_glossiness)
             {
                 const cgltf_float* base_color = cgltfMat.pbr_specular_glossiness.diffuse_factor;
-                material->baseColor = { base_color[0], base_color[1], base_color[2], base_color[2] };
+                material.baseColor = { base_color[0], base_color[1], base_color[2], base_color[2] };
 
                 cgltf_int index = cgltfMat.pbr_specular_glossiness.diffuse_texture.texcoord;
-                material->uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
+                material.uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
 
                 if (cgltfMat.pbr_specular_glossiness.diffuse_texture.texture)
                 {
                     uint32_t index = uint32_t(cgltfMat.pbr_specular_glossiness.diffuse_texture.texture - data->textures);
-                    material->baseTextureHandle = meshSource->GetTextureSpan()[index];
+                    material.baseTextureHandle = meshSource->GetTextureSpan()[index];
                 }
             }
 
-            meshSource->dependencies[i] = material->handle;
-            material->state = AssetState::Loaded;
-            assetManager->AddMemoryOnlyAsset(material);
-            assetManager->OnAssetLoaded(material);
+            meshSource->dependencies[i] = asset.GetHandle();
+            assetState = AssetState::Loaded;
+            assetManager->AddMemoryOnlyAsset(asset, AssetType::Material);
+            assetManager->OnAssetLoaded(asset);
         }
 
-
-        HE_INFO("Import Memory Only materials [{}][{}][{}ms]", metadata.filePath.string(), data->materials_count, t.ElapsedMilliseconds());
+        HE_INFO("Import Memory Only materials [{}][{}ms]", data->materials_count, t.ElapsedMilliseconds());
     }
 
     void AppendNodes(
         MeshSource* meshSource,
         cgltf_data* data, 
-        const AssetMetadata& metadata,
         std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap
     )
     {
@@ -760,47 +765,43 @@ namespace Assets {
             AppendNodes(meshSource, node, cgltfNode, data, meshMap);
         }
 
-        HE_INFO("Import AppendNodes [{}][{}ms]", metadata.filePath.string(), t.ElapsedMilliseconds());
+        HE_INFO("Import AppendNodes [{}ms]", t.ElapsedMilliseconds());
     }
 
-    Asset* MeshSourceImporter::Import(const AssetMetadata& metadata)
+    Asset MeshSourceImporter::Import(const std::filesystem::path& filePath)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
         HE::Timer t;
 
-        auto path = assetManager->desc.assetsDirectory / metadata.filePath;
-        auto filePath = path.lexically_normal().string();
-        auto cStrFilePath = filePath.c_str();
+        auto path = assetManager->desc.assetsDirectory / filePath;
+        auto pathStr = path.lexically_normal().string();
+        auto cStrFilePath = pathStr.c_str();
 
         if (!std::filesystem::exists(path))
         {
             HE_ERROR("MeshSourceImporter : file {} not exists", cStrFilePath);
-            return nullptr;
+            return {};
         }
         
         cgltf_options options = {};
         cgltf_data* data = LoadGltfData(options, cStrFilePath);
         if (!data)
         {
-            return nullptr;
+            return {};
         }
 
-        auto meshSource = &assetManager->meshSources.emplace_back();
-        meshSource->state = AssetState::Loading;
+        auto asset = assetManager->CreateAsset(AssetType::MeshSource);
+        auto& assetState = asset.Get<AssetState>();
+        auto meshSource = &asset.Add<MeshSource>();
+        assetState = AssetState::Loading;
 
         meshSource->dependencies.resize(data->materials_count + data->textures_count);
         meshSource->materialCount = (uint32_t)data->materials_count;
         meshSource->textureCount = (uint32_t)data->textures_count;
         memset(meshSource->dependencies.data(), 0, meshSource->dependencies.size());
 
-        IndexRange materialsIndexRange = { assetManager->materials.size() , assetManager->materials.size() + meshSource->materialCount };
-        IndexRange textureIndexRange = { assetManager->textures.size() , assetManager->textures.size() + meshSource->textureCount };
-
-        assetManager->ReserveRange(AssetType::Material, materialsIndexRange.to);
-        assetManager->ReserveRange(AssetType::Texture2D, textureIndexRange.to);
-
-        std::unordered_map<const cgltf_material*, Material*> materials;
+        std::unordered_map<const cgltf_material*, Asset> materials;
         std::unordered_map<const cgltf_mesh*, Mesh*> meshMap;
 
         //  Textures 
@@ -812,50 +813,58 @@ namespace Assets {
                 const cgltf_texture* cgltfTexture = &data->textures[i];
                 const cgltf_image* image = cgltfTexture->image;
                 std::string name = image->name ? image->name : "Unnamed";
-                HE_INFO("Import Memory Only texture : [{}][{}]", metadata.filePath.string(), name);
+                HE_INFO("Import Memory Only texture : [{}][{}]", filePath.string(), name);
 
                 uint8_t* dataPtr = static_cast<uint8_t*>(image->buffer_view->buffer->data) + image->buffer_view->offset;
                 const size_t dataSize = image->buffer_view->size;
 
-                auto textureAsset = &assetManager->textures[textureIndexRange.from + i];
+                auto texture = assetManager->CreateAsset(AssetType::Texture2D);
+                auto& assetState = texture.Get<AssetState>();
+                auto& textureAsset = texture.Add<Texture>();
 
-                ImportTexture(assetManager, textureAsset, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name);
-                meshSource->dependencies[meshSource->materialCount + i] = textureAsset->handle;
+                ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name);
+                meshSource->dependencies[meshSource->materialCount + i] = texture.Get<AssetID>().id;
             }
 
-            HE_INFO("Import Memory Only textures [{}][{}][{}ms]", metadata.filePath.string(), data->textures_count, t.ElapsedMilliseconds());
+            HE_INFO("Import Memory Only textures [{}][{}][{}ms]", path.string(), data->textures_count, t.ElapsedMilliseconds());
         }
 
-        AppendMaterials(assetManager, data, materials, metadata, materialsIndexRange, meshSource);
+        AppendMaterials(assetManager, data, materials, meshSource);
         AppendMeshes(data, meshSource, meshMap, materials);
-        AppendNodes(meshSource, data, metadata, meshMap);
+        AppendNodes(meshSource, data, meshMap);
 
         cgltf_free(data);
-        meshSource->state = AssetState::Loaded;
+        assetState = AssetState::Loaded;
 
-        return meshSource;
+        return asset;
     }
 
-    Asset* MeshSourceImporter::ImportAsync(const AssetMetadata& metadata)
+    Asset MeshSourceImporter::ImportAsync(const std::filesystem::path& filePath)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
-
+        
         HE::Timer t;
 
-        auto path = assetManager->desc.assetsDirectory / metadata.filePath;
+        auto path = assetManager->desc.assetsDirectory / filePath;
 
         if (!std::filesystem::exists(path))
         {
             HE_ERROR("MeshSourceImporter : file {} not exists", path.string());
-            return nullptr;
+            return {};
         }
 
-        auto meshSource = &assetManager->meshSources.emplace_back();
-        meshSource->state = AssetState::Loading;
+        auto asset = assetManager->CreateAsset(AssetType::MeshSource);
+        auto& assetState = asset.Get<AssetState>();
+        auto& meshSource = asset.Add<MeshSource>();
+        assetState = AssetState::Loading;
+        auto assetHandle = asset.GetHandle();
 
-        HE::Jops::SubmitTask([this, meshSource, metadata, path]() {
+        HE::Jops::SubmitTask([this, assetHandle, path]() {
 
             HE_PROFILE_SCOPE_NC("ImportAsync::SubmitTask", HE_PROFILE_COLOR);
+
+            auto asset = assetManager->FindAsset(assetHandle);
+            auto meshSource = &asset.Get<MeshSource>();
 
             auto filePath = path.lexically_normal().string();
             auto cStrFilePath = filePath.c_str();
@@ -868,20 +877,14 @@ namespace Assets {
             meshSource->textureCount = (uint32_t)data->textures_count;
             memset(meshSource->dependencies.data(), 0, meshSource->dependencies.size());
 
-            IndexRange materialsIndexRange = { assetManager->materials.size() , assetManager->materials.size() + meshSource->materialCount };
-            IndexRange textureIndexRange = { assetManager->textures.size() , assetManager->textures.size() + meshSource->textureCount };
-
-            assetManager->ReserveRange(AssetType::Material, materialsIndexRange.to);
-            assetManager->ReserveRange(AssetType::Texture2D, textureIndexRange.to);
-
             HE::Jops::Taskflow tf;
 
-            std::unordered_map<const cgltf_material*, Material*> materials;
+            std::unordered_map<const cgltf_material*, Asset> materials;
             std::unordered_map<const cgltf_mesh*, Mesh*> meshMap;
 
             std::vector<tf::Task> textureTasks;
             textureTasks.reserve(data->textures_count);
-  
+
             // Textures
             {
                 HE::Timer t;
@@ -891,56 +894,60 @@ namespace Assets {
                     const cgltf_texture* cgltfTexture = &data->textures[i];
                     const cgltf_image* image = cgltfTexture->image;
                     std::string name = image->name ? image->name : "Unnamed";
-                    HE_INFO("Import memory only texture : [{}][{}]", metadata.filePath.string(), name);
+                    HE_INFO("Import memory only texture : [{}][{}]", path.string(), name);
 
                     uint8_t* dataPtr = static_cast<uint8_t*>(image->buffer_view->buffer->data) + image->buffer_view->offset;
                     const size_t dataSize = image->buffer_view->size;
 
-                    auto textureAsset = &assetManager->textures[textureIndexRange.from + i];
+                    auto texture = assetManager->CreateAsset(AssetType::Texture2D);
+                    auto& assetState = texture.Get<AssetState>();
+                    auto& textureAsset = texture.Add<Texture>();
 
-                    auto task = tf.emplace([this, textureAsset, dataPtr, dataSize, name]() { ImportTexture(assetManager, textureAsset, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name); });
+                    auto task = tf.emplace([this, texture, dataPtr, dataSize, name]() { ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name); });
                     textureTasks.emplace_back(task);
 
-                    meshSource->dependencies[meshSource->materialCount + i] = textureAsset->handle;
+                    meshSource->dependencies[meshSource->materialCount + i] = texture.Get<AssetID>().id;
                 }
 
-                HE_INFO("Import memory only textures [{}][{}][{}ms]", metadata.filePath.string(), data->textures_count, t.ElapsedMilliseconds());
+                HE_INFO("Import memory only textures [{}][{}][{}ms]", path.string(), data->textures_count, t.ElapsedMilliseconds());
             }
 
-            AppendMaterials(assetManager, data, materials, metadata, materialsIndexRange, meshSource);
+            AppendMaterials(assetManager, data, materials, meshSource);
             AppendMeshes(data, meshSource, meshMap, materials);
-            AppendNodes(meshSource, data, metadata, meshMap);
+            AppendNodes(meshSource, data, meshMap);
 
-            auto finalTask = tf.emplace([this, &data, meshSource]() {
+            auto finalTask = tf.emplace([this, asset, &data, meshSource]() {
 
                 cgltf_free(data);
-                assetManager->OnAssetLoaded(meshSource);
+                assetManager->OnAssetLoaded(asset);
             });
 
             for (auto& t : textureTasks)
                 t.precede(finalTask);
 
-            meshSource->state = AssetState::Loaded;
+            auto& state = asset.Get<AssetState>();
+            state = AssetState::Loaded;
+
             HE::Jops::RunTaskflow(tf).wait();
         });
 
-        HE_ERROR("[Import meshSource] [{}][{}ms]", metadata.filePath.string(), t.ElapsedMilliseconds());
+        HE_ERROR("[Import meshSource] [{}][{}ms]", path.string(), t.ElapsedMilliseconds());
 
-        return meshSource;
+        return asset;
     }
 
-    void MeshSourceImporter::Save(Asset* asset, const AssetMetadata& metadata)
+    void MeshSourceImporter::Save(Asset asset, const std::filesystem::path& metadata)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
         NOT_YET_IMPLEMENTED();
     }
 
-    Asset* MeshSourceImporter::Create(const std::filesystem::path& filePath)
+    Asset MeshSourceImporter::Create(const std::filesystem::path& filePath)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
         NOT_YET_IMPLEMENTED();
-        return nullptr;
+        return {};
     }
 }

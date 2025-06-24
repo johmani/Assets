@@ -266,7 +266,7 @@ namespace Assets {
         }
     }
 
-    void DeserializEntity(simdjson::dom::element element, Scene* scene)
+    void DeserializEntity(simdjson::dom::element element, Scene& scene)
     {
         UUID id = element["IDComponent"]["id"].get_uint64().value();
         std::string name = element["NameComponent"]["name"].get_c_str().value();
@@ -280,7 +280,7 @@ namespace Assets {
             children[i] = array.at(i).get_uint64().value();
         }
 
-        Entity deserializedEntity = scene->CreateEntityWithUUID(id, name, parent);
+        Entity deserializedEntity = scene.CreateEntityWithUUID(id, name, parent);
 
         const auto& transformComponent = element["TransformComponent"];
         if (!transformComponent.error())
@@ -327,13 +327,13 @@ namespace Assets {
         }
     }
 
-    void SerializeScene(Scene* scene,const std::filesystem::path& filePath)
+    void SerializeScene(Scene& scene,const std::filesystem::path& filePath)
     {
         std::function<void(Entity entity, std::ostringstream& out)> serialize = [&](Entity entity, std::ostringstream& out) {
 
             const auto& children = entity.GetChildren();
 
-            if (scene->rootID != entity.GetUUID()) out << ",\n";
+            if (scene.rootID != entity.GetUUID()) out << ",\n";
 
             out << "\t\t{\n";
             SerializeEntity(out, entity);
@@ -341,7 +341,7 @@ namespace Assets {
 
             for (size_t i = 0; i < children.size(); ++i)
             {
-                auto e = scene->FindEntity(children[i]);
+                auto e = scene.FindEntity(children[i]);
                 serialize(e, out);
             }
         };
@@ -355,14 +355,14 @@ namespace Assets {
         std::ostringstream out;
         out << "{\n";
 
-        out << "\t\"name\" : \"" << scene->name << "\",\n";
-        out << "\t\"id\" : " << scene->rootID << ",\n";
+        out << "\t\"name\" : \"" << scene.name << "\",\n";
+        out << "\t\"id\" : " << scene.rootID << ",\n";
         out << "\t\"entities\" : [\n";
 
-        auto root = scene->FindEntity(scene->rootID);
+        auto root = scene.FindEntity(scene.rootID);
         if (!root)
         {
-            root = scene->CreateEntityWithUUID(scene->rootID, "root", 0);
+            root = scene.CreateEntityWithUUID(scene.rootID, "root", 0);
         }
 
         serialize(root, out);
@@ -375,7 +375,7 @@ namespace Assets {
         file.close();
     }
 
-    bool DeserializeScene(Scene* scene, const std::filesystem::path& filePath)
+    bool DeserializeScene(Scene& scene, const std::filesystem::path& filePath)
     {
         if (!std::filesystem::exists(filePath))
         {
@@ -389,8 +389,8 @@ namespace Assets {
         if (doc["name"].error() || doc["id"].error())
             return false;
 
-        scene->name = filePath.stem().string();
-        scene->rootID = doc["id"].get_uint64().value();
+        scene.name = filePath.stem().string();
+        scene.rootID = doc["id"].get_uint64().value();
 
         auto entities = doc["entities"].get_array();
         if (!entities.error())
@@ -409,39 +409,45 @@ namespace Assets {
     {
     }
 
-    Asset* SceneImporter::Import(const AssetMetadata& metadata)
+    Asset SceneImporter::Import(const std::filesystem::path& filePath)
     {
-        auto scene = &assetManager->scenes.emplace_back();
-        scene->state = AssetState::Loading;
+        Asset asset = assetManager->CreateAsset(AssetType::Scene);
+        auto& assetState = asset.Get<AssetState>();
+        auto& scene = asset.Add<Scene>();
 
-        if (DeserializeScene(scene, assetManager->desc.assetsDirectory / metadata.filePath))
+        assetState = AssetState::Loading;
+
+        if (DeserializeScene(scene, assetManager->desc.assetsDirectory / filePath))
         {
-            scene->state = AssetState::Loaded;
-            assetManager->OnAssetLoaded(scene);
+            assetState = AssetState::Loaded;
+            assetManager->OnAssetLoaded(asset);
 
-            return scene;
+            return asset;
         }
 
-        return nullptr;
+        return {};
     }
 
-    Asset* SceneImporter::ImportAsync(const AssetMetadata& metadata)
+    Asset SceneImporter::ImportAsync(const std::filesystem::path& metadata)
     {
         HE_PROFILE_FUNCTION();
-        return nullptr;
+        return {};
     }
 
-    void SceneImporter::Save(Asset* asset, const AssetMetadata& metadata)
+    void SceneImporter::Save(Asset asset, const std::filesystem::path& filePath)
     {
-        Scene* scene = (Scene*)asset;
-        SerializeScene(scene, assetManager->desc.assetsDirectory / metadata.filePath);
-    }
-
-    Asset* SceneImporter::Create(const std::filesystem::path& filePath)
-    {
-        auto scene = &assetManager->scenes.emplace_back();
+        Scene& scene = asset.Get<Scene>();
         SerializeScene(scene, assetManager->desc.assetsDirectory / filePath);
-        return scene;
+    }
+
+    Asset SceneImporter::Create(const std::filesystem::path& filePath)
+    {
+        Asset asset = assetManager->CreateAsset(AssetType::Scene);
+        auto& assetState = asset.Get<AssetState>();
+        auto& scene = asset.Add<Scene>();
+
+        SerializeScene(scene, assetManager->desc.assetsDirectory / filePath);
+        return asset;
     }
 
 #pragma endregion
