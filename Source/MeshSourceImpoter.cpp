@@ -12,12 +12,6 @@ import std;
 
 namespace Assets {
 
-    struct IndexRange
-    {
-        size_t from = 0;
-        size_t to = 0;
-    };
-
     MeshSourceImporter::MeshSourceImporter(AssetManager* pAssetManager)
         : assetManager(pAssetManager)
     {
@@ -106,7 +100,7 @@ namespace Assets {
         }
     }
 
-    static void AppendNodes(MeshSource* meshSource, Node& node, cgltf_node* cgltfNode, const cgltf_data* data, const std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
+    static void AppendNodes(Asset asset, Node& node, cgltf_node* cgltfNode, const cgltf_data* data, const std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
@@ -115,36 +109,40 @@ namespace Assets {
             if (meshMap.contains(cgltfNode->mesh))
             {
                 const auto& mesh = *meshMap.at(cgltfNode->mesh);
-                node.meshIndex = mesh.globalMeshIndex;
+                node.meshIndex = mesh.index;
             }
         }
 
-        node.meshSource = meshSource;
-        node.childrenOffset = (uint32_t)meshSource->nodes.size();
+        auto& hierarchy = asset.Get<MeshSourecHierarchy>();
+
+        node.childrenOffset = (uint32_t)hierarchy.nodes.size();
         node.childrenCount = (uint32_t)cgltfNode->children_count;
 
         for (cgltf_size i = 0; i < cgltfNode->children_count; i++)
         {
             cgltf_node* child = cgltfNode->children[i];
-            Node& newNode = meshSource->nodes.emplace_back();
+            Node& newNode = hierarchy.nodes.emplace_back();
             newNode.name = child->name ? child->name : "None";
             newNode.transform = GetNodeTransform(child);
         }
 
         for (cgltf_size i = 0; i < cgltfNode->children_count; i++)
         {
-            Node& newNode = meshSource->nodes[node.childrenOffset + i];
+            Node& newNode = hierarchy.nodes[node.childrenOffset + i];
             cgltf_node* child = cgltfNode->children[i];
 
-            AppendNodes(meshSource, newNode, child, data, meshMap);
+            AppendNodes(asset, newNode, child, data, meshMap);
         }
     }
 
-    void ImportTexture(AssetManager* assetManager, Asset asset, HE::Buffer buffer, nvrhi::IDevice* device, const std::string& name)
+    static void ImportTexture(AssetManager* assetManager, Asset asset, HE::Buffer buffer, nvrhi::IDevice* device, const std::string& name)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
-        assetManager->asyncTaskCount++;
+        auto handle = asset.GetHandle();
+        auto& texture = asset.Add<Texture>();
+        auto& state = asset.Get<AssetState>();
+        state = AssetState::Loading;
 
         HE::Image image(buffer);
         uint8_t* data = image.ExtractData();
@@ -154,28 +152,22 @@ namespace Assets {
         desc.height = image.GetHeight();
         desc.format = nvrhi::Format::RGBA8_UNORM;
         desc.debugName = name;
+        texture.texture = device->createTexture(desc);
 
-        Texture& textureAsset = asset.Get<Texture>();
-        auto id = asset.Get<AssetID>().id;
-        nvrhi::TextureHandle texture = device->createTexture(desc);
-        textureAsset.texture = texture;
+        HE::Jops::SubmitToMainThread([assetManager, device, handle, desc, data, name]() {
 
-        HE::Jops::SubmitToMainThread([assetManager, device, id, desc, data, name]() {
+            auto asset = assetManager->FindAsset(handle);
+            auto& texture = asset.Get<Texture>();
+            auto& state = asset.Get<AssetState>();
 
-            auto asset = assetManager->FindAsset(id);
-
-            auto& textureAsset = asset.Get<Texture>();
-
-            HE_PROFILE_SCOPE_NC("ImportTexture::SubmitToMainThread", HE_PROFILE_MAIN_THREAD);
-
-            assetManager->AddMemoryOnlyAsset(asset, AssetType::Texture2D);
+            assetManager->MarkAsMemoryOnlyAsset(asset, AssetType::Texture2D);
 
             auto commandList = device->createCommandList({ .enableImmediateExecution = false });
 
             commandList->open();
-            commandList->beginTrackingTextureState(textureAsset.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
-            commandList->writeTexture(textureAsset.texture, 0, 0, data, desc.width * 4);
-            commandList->setPermanentTextureState(textureAsset.texture, nvrhi::ResourceStates::ShaderResource);
+            commandList->beginTrackingTextureState(texture.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+            commandList->writeTexture(texture.texture, 0, 0, data, desc.width * 4);
+            commandList->setPermanentTextureState(texture.texture, nvrhi::ResourceStates::ShaderResource);
             commandList->commitBarriers();
             commandList->close();
             device->executeCommandList(commandList);
@@ -183,14 +175,14 @@ namespace Assets {
             commandList.Reset();
 
             std::free(data);
-            asset.Get<AssetState>() = AssetState::Loaded;
+            state = AssetState::Loaded;
             assetManager->OnAssetLoaded(asset);
 
             assetManager->asyncTaskCount--;
         });
     }
 
-    void AppendMeshes(cgltf_data* data, MeshSource* meshSource, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap, std::unordered_map<const cgltf_material*, Asset>& materials)
+    static void AppendMeshes(cgltf_data* data, MeshSource& meshSource, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap, std::unordered_map<const cgltf_material*, Asset>& materials)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
@@ -251,7 +243,7 @@ namespace Assets {
             }
         }
 
-        meshSource->cpuIndexBuffer.resize(totalIndices);
+        meshSource.cpuIndexBuffer.resize(totalIndices);
 
         uint32_t positionByteSize = uint32_t(totalVertices * GetVertexAttributeSize(VertexAttribute::Position));
         uint32_t normalByteSize = uint32_t(totalVertices * GetVertexAttributeSize(VertexAttribute::Normal));
@@ -277,17 +269,17 @@ namespace Assets {
             bufferSize += uint32_t(totalVertices * GetVertexAttributeSize(VertexAttribute::BoneWeights));
         }
 
-        meshSource->cpuVertexBuffer.resize(bufferSize);
-        meshSource->vertexCount = (uint32_t)totalVertices;
+        meshSource.cpuVertexBuffer.resize(bufferSize);
+        meshSource.vertexCount = (uint32_t)totalVertices;
 
-        meshSource->vertexBufferRanges[int(VertexAttribute::Position)]  = { 0                                                   , positionByteSize };
-        meshSource->vertexBufferRanges[int(VertexAttribute::Normal)]    = { positionByteSize                                    , normalByteSize   };
-        meshSource->vertexBufferRanges[int(VertexAttribute::Tangent)]   = { positionByteSize + normalByteSize                   , tangentByteSize  };
-        meshSource->vertexBufferRanges[int(VertexAttribute::TexCoord0)] = { positionByteSize + normalByteSize + tangentByteSize , texCoordByteSize };
+        meshSource.vertexBufferRanges[int(VertexAttribute::Position)]  = { 0                                                   , positionByteSize };
+        meshSource.vertexBufferRanges[int(VertexAttribute::Normal)]    = { positionByteSize                                    , normalByteSize   };
+        meshSource.vertexBufferRanges[int(VertexAttribute::Tangent)]   = { positionByteSize + normalByteSize                   , tangentByteSize  };
+        meshSource.vertexBufferRanges[int(VertexAttribute::TexCoord0)] = { positionByteSize + normalByteSize + tangentByteSize , texCoordByteSize };
 
         if (hasUV1)
         {
-            meshSource->vertexBufferRanges[int(VertexAttribute::TexCoord1)] = { positionByteSize + normalByteSize + tangentByteSize + texCoordByteSize , texCoordByteSize };
+            meshSource.vertexBufferRanges[int(VertexAttribute::TexCoord1)] = { positionByteSize + normalByteSize + tangentByteSize + texCoordByteSize , texCoordByteSize };
         }
 
         totalIndices = 0;
@@ -296,8 +288,8 @@ namespace Assets {
         std::vector<Math::float3> computedTangents;
         std::vector<Math::float3> computedBitangents;
 
-        meshSource->meshes.reserve(data->meshes_count);
-        meshSource->geometries.reserve(geometryCount);
+        meshSource.meshes.reserve(data->meshes_count);
+        meshSource.geometries.reserve(geometryCount);
 
         geometryCount = 0;
 
@@ -305,21 +297,20 @@ namespace Assets {
         {
             const cgltf_mesh& cltfMesh = data->meshes[mesh_idx];
 
-            Mesh& mesh = meshSource->meshes.emplace_back();
+            Mesh& mesh = meshSource.meshes.emplace_back();
             meshMap[&cltfMesh] = &mesh;
 
             if (cltfMesh.name)
             {
                 mesh.name = cltfMesh.name;
             }
-            mesh.meshSource = meshSource;
+            mesh.meshSource = &meshSource;
             mesh.indexOffset = (uint32_t)totalIndices;
             mesh.vertexOffset = (uint32_t)totalVertices;
            
             mesh.geometryOffset = geometryCount;
             mesh.geometryCount = (uint32_t)cltfMesh.primitives_count;
-
-            geometryCount += mesh.geometryCount;
+            mesh.index = (uint32_t)mesh_idx;
 
             for (size_t prim_idx = 0; prim_idx < cltfMesh.primitives_count; prim_idx++)
             {
@@ -402,7 +393,7 @@ namespace Assets {
                     indexCount = prim.indices->count;
 
                     auto [indexSrc, indexStride] = BufferIterator(prim.indices, 0);
-                    uint32_t* indexDst = meshSource->cpuIndexBuffer.data() + totalIndices;
+                    uint32_t* indexDst = meshSource.cpuIndexBuffer.data() + totalIndices;
 
                     switch (prim.indices->component_type)
                     {
@@ -445,7 +436,7 @@ namespace Assets {
 
                 if (positionsAccessor)
                 {
-                    Math::float3* positionDst = meshSource->GetAttribute<Math::float3>(VertexAttribute::Position) + totalVertices;
+                    Math::float3* positionDst = meshSource.GetAttribute<Math::float3>(VertexAttribute::Position) + totalVertices;
 
                     for (size_t v_idx = 0; v_idx < positionsAccessor->count; v_idx++)
                     {
@@ -461,7 +452,7 @@ namespace Assets {
                 if (normalsAccessor)
                 {
                     HE_ASSERT(normalsAccessor->count == positionsAccessor->count);
-                    uint32_t* normalDst = meshSource->GetAttribute<uint32_t>(VertexAttribute::Normal) + totalVertices;
+                    uint32_t* normalDst = meshSource.GetAttribute<uint32_t>(VertexAttribute::Normal) + totalVertices;
 
                     for (size_t v_idx = 0; v_idx < normalsAccessor->count; v_idx++)
                     {
@@ -475,7 +466,7 @@ namespace Assets {
                 if (tangentsAccessor)
                 {
                     HE_ASSERT(tangentsAccessor->count == positionsAccessor->count);
-                    uint32_t* tangentDst = meshSource->GetAttribute<uint32_t>(VertexAttribute::Tangent) + totalVertices;
+                    uint32_t* tangentDst = meshSource.GetAttribute<uint32_t>(VertexAttribute::Tangent) + totalVertices;
                     for (size_t v_idx = 0; v_idx < tangentsAccessor->count; v_idx++)
                     {
                         cgltf_float tang[4];
@@ -488,7 +479,7 @@ namespace Assets {
                 if (texcoords0Accessor)
                 {
                     HE_ASSERT(texcoords0Accessor->count == positionsAccessor->count);
-                    Math::float2* texcoordDst = meshSource->GetAttribute<Math::float2>(VertexAttribute::TexCoord0) + totalVertices;
+                    Math::float2* texcoordDst = meshSource.GetAttribute<Math::float2>(VertexAttribute::TexCoord0) + totalVertices;
 
                     for (size_t v_idx = 0; v_idx < texcoords0Accessor->count; v_idx++)
                     {
@@ -500,7 +491,7 @@ namespace Assets {
                 }
                 else
                 {
-                    Math::float2* texcoordDst = meshSource->GetAttribute<Math::float2>(VertexAttribute::TexCoord0) + totalVertices;
+                    Math::float2* texcoordDst = meshSource.GetAttribute<Math::float2>(VertexAttribute::TexCoord0) + totalVertices;
                     for (size_t v_idx = 0; v_idx < positionsAccessor->count; v_idx++)
                     {
                         *texcoordDst = Math::float2(0.f);
@@ -511,7 +502,7 @@ namespace Assets {
                 if (texcoords1Accessor)
                 {
                     HE_ASSERT(texcoords0Accessor->count == positionsAccessor->count);
-                    Math::float2* texcoordDst = meshSource->GetAttribute<Math::float2>(VertexAttribute::TexCoord1) + totalVertices;
+                    Math::float2* texcoordDst = meshSource.GetAttribute<Math::float2>(VertexAttribute::TexCoord1) + totalVertices;
 
                     for (size_t v_idx = 0; v_idx < texcoords1Accessor->count; v_idx++)
                     {
@@ -573,7 +564,7 @@ namespace Assets {
                         computedBitangents[i2] = bitangent2;
                     }
 
-                    uint32_t* tangentDst = meshSource->GetAttribute<uint32_t>(VertexAttribute::Tangent) + totalVertices;
+                    uint32_t* tangentDst = meshSource.GetAttribute<uint32_t>(VertexAttribute::Tangent) + totalVertices;
 
                     for (size_t v_idx = 0; v_idx < positionsAccessor->count; v_idx++)
                     {
@@ -599,11 +590,11 @@ namespace Assets {
                     }
                 }
 
-                MeshGeometry& geometry = meshSource->geometries.emplace_back();
+                MeshGeometry& geometry = meshSource.geometries.emplace_back();
 
                 if (materials.contains(prim.material))
                 {
-                    geometry.materailHandle = materials.at(prim.material).Get<AssetID>().id;
+                    geometry.materailHandle = materials.at(prim.material).GetHandle();
                 }
 
                 geometry.mesh = &mesh;
@@ -612,6 +603,8 @@ namespace Assets {
                 geometry.indexCount = (uint32_t)indexCount;
                 geometry.vertexCount = (uint32_t)positionsAccessor->count;
                 geometry.aabb = bounds;
+                geometry.index = geometryCount;
+
                 switch (prim.type)
                 {
                 case cgltf_primitive_type_triangles:  geometry.type = MeshGeometryPrimitiveType::Triangles;  break;
@@ -625,27 +618,12 @@ namespace Assets {
 
                 totalIndices += geometry.indexCount;
                 totalVertices += geometry.vertexCount;
-            }
-        }
-
-        {
-            int meshIndex = 0;
-            int geometryIndex = 0;
-            for (auto& mesh : meshSource->meshes)
-            {
-                for (auto& geometry : meshSource->geometries)
-                {
-                    geometry.globalGeometryIndex = geometryIndex;
-                    ++geometryIndex;
-                }
-
-                mesh.globalMeshIndex = meshIndex;
-                ++meshIndex;
+                geometryCount++;
             }
         }
     }
 
-    cgltf_data* LoadGltfData(cgltf_options options, const char* cStrFilePath)
+    static cgltf_data* LoadGltfData(cgltf_options options, const char* cStrFilePath)
     {
         cgltf_data* data = nullptr;
         cgltf_result result = cgltf_parse_file(&options, cStrFilePath, &data);
@@ -674,11 +652,12 @@ namespace Assets {
         return data;
     }
 
-    void AppendMaterials(
+    static void AppendMaterials(
         AssetManager* assetManager,
-        cgltf_data* data ,
+        cgltf_data* data,
         std::unordered_map<const cgltf_material*, Asset>& materials,
-        MeshSource* meshSource
+        Asset mainAsset,
+        uint32_t materialCount
     )
     {
         HE::Timer t;
@@ -686,9 +665,12 @@ namespace Assets {
         {
             const cgltf_material& cgltfMat = data->materials[i];
 
-            auto asset = assetManager->CreateAsset(AssetType::Material);
+            AssetHandle newHandle;
+            auto asset = assetManager->CreateAsset(newHandle);
             auto& assetState = asset.Get<AssetState>();
             auto& material = asset.Add<Material>();
+            auto& dependencies = mainAsset.Get<AssetDependencies>().dependencies;
+
             assetState = AssetState::Loading;
             materials[&cgltfMat] = asset;
            
@@ -706,7 +688,7 @@ namespace Assets {
                 if (cgltfMat.pbr_metallic_roughness.base_color_texture.texture)
                 {
                     uint32_t index = uint32_t(cgltfMat.pbr_metallic_roughness.base_color_texture.texture - data->textures);
-                    material.baseTextureHandle = meshSource->GetTextureSpan()[index];
+                    material.baseTextureHandle = dependencies[materialCount + index];
                 }
             }
 
@@ -721,38 +703,36 @@ namespace Assets {
                 if (cgltfMat.pbr_specular_glossiness.diffuse_texture.texture)
                 {
                     uint32_t index = uint32_t(cgltfMat.pbr_specular_glossiness.diffuse_texture.texture - data->textures);
-                    material.baseTextureHandle = meshSource->GetTextureSpan()[index];
+                    material.baseTextureHandle = dependencies[materialCount + index];
                 }
             }
 
-            meshSource->dependencies[i] = asset.GetHandle();
+            dependencies[i] = newHandle;
             assetState = AssetState::Loaded;
-            assetManager->AddMemoryOnlyAsset(asset, AssetType::Material);
+            assetManager->MarkAsMemoryOnlyAsset(asset, AssetType::Material);
             assetManager->OnAssetLoaded(asset);
         }
 
         HE_INFO("Import Memory Only materials [{}][{}ms]", data->materials_count, t.ElapsedMilliseconds());
     }
 
-    void AppendNodes(
-        MeshSource* meshSource,
-        cgltf_data* data, 
-        std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap
-    )
+    static void AppendNodes( Asset asset, cgltf_data* data, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
     {
         HE::Timer t;
 
-        meshSource->nodes.reserve(data->nodes_count);
-        meshSource->root.name = data->scene->name ? data->scene->name : "Model";
-        meshSource->root.transform = Math::float4x4(1.0f);
-        meshSource->root.childrenOffset = 0;
-        meshSource->root.childrenCount = (uint32_t)data->scene->nodes_count;
-        meshSource->root.meshSource = meshSource;
+        auto& hierarchy = asset.Add<MeshSourecHierarchy>();
+        auto handle = asset.GetHandle();
+
+        hierarchy.nodes.reserve(data->nodes_count);
+        hierarchy.root.name = data->scene->name ? data->scene->name : "Model";
+        hierarchy.root.transform = Math::float4x4(1.0f);
+        hierarchy.root.childrenOffset = 0;
+        hierarchy.root.childrenCount = (uint32_t)data->scene->nodes_count;
 
         for (cgltf_size i = 0; i < data->scene->nodes_count; i++)
         {
             cgltf_node* cgltfNode = data->scene->nodes[i];
-            Node& node = meshSource->nodes.emplace_back();
+            Node& node = hierarchy.nodes.emplace_back();
             node.name = cgltfNode->name ? cgltfNode->name : "Node";
             node.transform = GetNodeTransform(cgltfNode);
         }
@@ -760,15 +740,15 @@ namespace Assets {
         for (cgltf_size i = 0; i < data->scene->nodes_count; i++)
         {
             cgltf_node* cgltfNode = data->scene->nodes[i];
-            Node& node = meshSource->nodes[meshSource->root.childrenOffset + i];
+            Node& node = hierarchy.nodes[hierarchy.root.childrenOffset + i];
 
-            AppendNodes(meshSource, node, cgltfNode, data, meshMap);
+            AppendNodes(asset, node, cgltfNode, data, meshMap);
         }
 
         HE_INFO("Import AppendNodes [{}ms]", t.ElapsedMilliseconds());
     }
 
-    Asset MeshSourceImporter::Import(const std::filesystem::path& filePath)
+    Asset MeshSourceImporter::Import(AssetHandle handle, const std::filesystem::path& filePath)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
@@ -791,15 +771,16 @@ namespace Assets {
             return {};
         }
 
-        auto asset = assetManager->CreateAsset(AssetType::MeshSource);
+        auto asset = assetManager->CreateAsset(handle);
         auto& assetState = asset.Get<AssetState>();
-        auto meshSource = &asset.Add<MeshSource>();
+        auto& meshSource = asset.Add<MeshSource>();
         assetState = AssetState::Loading;
 
-        meshSource->dependencies.resize(data->materials_count + data->textures_count);
-        meshSource->materialCount = (uint32_t)data->materials_count;
-        meshSource->textureCount = (uint32_t)data->textures_count;
-        memset(meshSource->dependencies.data(), 0, meshSource->dependencies.size());
+        auto& assetDependencies = asset.Add<AssetDependencies>();
+        assetDependencies.dependencies.resize(data->materials_count + data->textures_count);
+        meshSource.materialCount = (uint32_t)data->materials_count;
+        meshSource.textureCount = (uint32_t)data->textures_count;
+        memset(assetDependencies.dependencies.data(), 0, assetDependencies.dependencies.size());
 
         std::unordered_map<const cgltf_material*, Asset> materials;
         std::unordered_map<const cgltf_mesh*, Mesh*> meshMap;
@@ -813,25 +794,23 @@ namespace Assets {
                 const cgltf_texture* cgltfTexture = &data->textures[i];
                 const cgltf_image* image = cgltfTexture->image;
                 std::string name = image->name ? image->name : "Unnamed";
-                HE_INFO("Import Memory Only texture : [{}][{}]", filePath.string(), name);
+                HE_INFO("Import Memory Only texture [{}]", name);
 
                 uint8_t* dataPtr = static_cast<uint8_t*>(image->buffer_view->buffer->data) + image->buffer_view->offset;
                 const size_t dataSize = image->buffer_view->size;
 
-                auto texture = assetManager->CreateAsset(AssetType::Texture2D);
-                auto& assetState = texture.Get<AssetState>();
-                auto& textureAsset = texture.Add<Texture>();
-
-                ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name);
-                meshSource->dependencies[meshSource->materialCount + i] = texture.Get<AssetID>().id;
+                AssetHandle newHandle;
+                auto texture = assetManager->CreateAsset(newHandle);
+                ImportTexture(assetManager, texture, HE::Buffer{ dataPtr, dataSize }, assetManager->device, name);
+                assetDependencies.dependencies[meshSource.materialCount + i] = texture.GetHandle();
             }
 
-            HE_INFO("Import Memory Only textures [{}][{}][{}ms]", path.string(), data->textures_count, t.ElapsedMilliseconds());
+            HE_INFO("Import Memory Only textures [{}][{} ms]", data->textures_count, t.ElapsedMilliseconds());
         }
 
-        AppendMaterials(assetManager, data, materials, meshSource);
+        AppendMaterials(assetManager, data, materials, asset, meshSource.materialCount);
         AppendMeshes(data, meshSource, meshMap, materials);
-        AppendNodes(meshSource, data, meshMap);
+        AppendNodes(asset, data, meshMap);
 
         cgltf_free(data);
         assetState = AssetState::Loaded;
@@ -839,7 +818,7 @@ namespace Assets {
         return asset;
     }
 
-    Asset MeshSourceImporter::ImportAsync(const std::filesystem::path& filePath)
+    Asset MeshSourceImporter::ImportAsync(AssetHandle handle, const std::filesystem::path& filePath)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
         
@@ -853,18 +832,17 @@ namespace Assets {
             return {};
         }
 
-        auto asset = assetManager->CreateAsset(AssetType::MeshSource);
+        auto asset = assetManager->CreateAsset(handle);
         auto& assetState = asset.Get<AssetState>();
         auto& meshSource = asset.Add<MeshSource>();
         assetState = AssetState::Loading;
-        auto assetHandle = asset.GetHandle();
 
-        HE::Jops::SubmitTask([this, assetHandle, path]() {
+        HE::Jops::SubmitTask([this, handle, path]() {
 
             HE_PROFILE_SCOPE_NC("ImportAsync::SubmitTask", HE_PROFILE_COLOR);
 
-            auto asset = assetManager->FindAsset(assetHandle);
-            auto meshSource = &asset.Get<MeshSource>();
+            auto asset = assetManager->FindAsset(handle);
+            auto& meshSource = asset.Get<MeshSource>();
 
             auto filePath = path.lexically_normal().string();
             auto cStrFilePath = filePath.c_str();
@@ -872,10 +850,11 @@ namespace Assets {
             cgltf_options options = {};
             cgltf_data* data = LoadGltfData(options, cStrFilePath);
 
-            meshSource->dependencies.resize(data->materials_count + data->textures_count);
-            meshSource->materialCount = (uint32_t)data->materials_count;
-            meshSource->textureCount = (uint32_t)data->textures_count;
-            memset(meshSource->dependencies.data(), 0, meshSource->dependencies.size());
+            auto& assetDependencies = asset.Add<AssetDependencies>(); // [material][texture]
+            assetDependencies.dependencies.resize(data->materials_count + data->textures_count);
+            meshSource.materialCount = (uint32_t)data->materials_count;
+            meshSource.textureCount = (uint32_t)data->textures_count;
+            memset(assetDependencies.dependencies.data(), 0, assetDependencies.dependencies.size());
 
             HE::Jops::Taskflow tf;
 
@@ -894,29 +873,28 @@ namespace Assets {
                     const cgltf_texture* cgltfTexture = &data->textures[i];
                     const cgltf_image* image = cgltfTexture->image;
                     std::string name = image->name ? image->name : "Unnamed";
-                    HE_INFO("Import memory only texture : [{}][{}]", path.string(), name);
+                    HE_INFO("Import memory only texture [{}]", name);
 
                     uint8_t* dataPtr = static_cast<uint8_t*>(image->buffer_view->buffer->data) + image->buffer_view->offset;
                     const size_t dataSize = image->buffer_view->size;
 
-                    auto texture = assetManager->CreateAsset(AssetType::Texture2D);
-                    auto& assetState = texture.Get<AssetState>();
-                    auto& textureAsset = texture.Add<Texture>();
-
+                    AssetHandle newHandle;
+                    auto texture = assetManager->CreateAsset(newHandle);
                     auto task = tf.emplace([this, texture, dataPtr, dataSize, name]() { ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name); });
                     textureTasks.emplace_back(task);
+                    assetManager->asyncTaskCount++;
 
-                    meshSource->dependencies[meshSource->materialCount + i] = texture.Get<AssetID>().id;
+                    assetDependencies.dependencies[meshSource.materialCount + i] = texture.GetHandle();
                 }
 
-                HE_INFO("Import memory only textures [{}][{}][{}ms]", path.string(), data->textures_count, t.ElapsedMilliseconds());
+                HE_INFO("Import memory only textures [{}][{} ms]", data->textures_count, t.ElapsedMilliseconds());
             }
 
-            AppendMaterials(assetManager, data, materials, meshSource);
+            AppendMaterials(assetManager, data, materials, asset, meshSource.materialCount);
             AppendMeshes(data, meshSource, meshMap, materials);
-            AppendNodes(meshSource, data, meshMap);
+            AppendNodes(asset, data, meshMap);
 
-            auto finalTask = tf.emplace([this, asset, &data, meshSource]() {
+            auto finalTask = tf.emplace([this, asset, data]() {
 
                 cgltf_free(data);
                 assetManager->OnAssetLoaded(asset);
@@ -931,23 +909,23 @@ namespace Assets {
             HE::Jops::RunTaskflow(tf).wait();
         });
 
-        HE_ERROR("[Import meshSource] [{}][{}ms]", path.string(), t.ElapsedMilliseconds());
+        HE_INFO("[Import meshSource] [{}][{} ms]", path.string(), t.ElapsedMilliseconds());
 
         return asset;
     }
 
-    void MeshSourceImporter::Save(Asset asset, const std::filesystem::path& metadata)
-    {
-        HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
-
-        NOT_YET_IMPLEMENTED();
-    }
-
-    Asset MeshSourceImporter::Create(const std::filesystem::path& filePath)
+    Asset MeshSourceImporter::Create(AssetHandle handle, const std::filesystem::path& filePath)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
         NOT_YET_IMPLEMENTED();
         return {};
+    }
+
+    void MeshSourceImporter::Save(Asset asset, const std::filesystem::path& filePath)
+    {
+        HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
+
+        NOT_YET_IMPLEMENTED();
     }
 }

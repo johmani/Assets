@@ -409,9 +409,9 @@ namespace Assets {
     {
     }
 
-    Asset SceneImporter::Import(const std::filesystem::path& filePath)
+    Asset SceneImporter::Import(AssetHandle handle, const std::filesystem::path& filePath)
     {
-        Asset asset = assetManager->CreateAsset(AssetType::Scene);
+        Asset asset = assetManager->CreateAsset(handle);
         auto& assetState = asset.Get<AssetState>();
         auto& scene = asset.Add<Scene>();
 
@@ -428,7 +428,7 @@ namespace Assets {
         return {};
     }
 
-    Asset SceneImporter::ImportAsync(const std::filesystem::path& metadata)
+    Asset SceneImporter::ImportAsync(AssetHandle handle, const std::filesystem::path& filePath)
     {
         HE_PROFILE_FUNCTION();
         return {};
@@ -436,13 +436,13 @@ namespace Assets {
 
     void SceneImporter::Save(Asset asset, const std::filesystem::path& filePath)
     {
-        Scene& scene = asset.Get<Scene>();
+        auto& scene = asset.Get<Scene>();
         SerializeScene(scene, assetManager->desc.assetsDirectory / filePath);
     }
 
-    Asset SceneImporter::Create(const std::filesystem::path& filePath)
+    Asset SceneImporter::Create(AssetHandle handle, const std::filesystem::path& filePath)
     {
-        Asset asset = assetManager->CreateAsset(AssetType::Scene);
+        Asset asset = assetManager->CreateAsset(handle);
         auto& assetState = asset.Get<AssetState>();
         auto& scene = asset.Add<Scene>();
 

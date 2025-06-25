@@ -40,9 +40,9 @@ namespace Assets {
         importers[(int)AssetType::MeshSource] = HE::CreateScope<MeshSourceImporter>(assetManager);
     }
 
-    Asset AssetImporter::ImportAsset(const std::filesystem::path& path, AssetImportingMode mode)
+    Asset AssetImporter::ImportAsset(AssetHandle handle, const std::filesystem::path& filePath, AssetImportingMode mode)
     {
-        auto type = GetAssetTypeFromFileExtension(path.extension());
+        auto type = GetAssetTypeFromFileExtension(filePath.extension());
 
         if (type != AssetType::None)
         {
@@ -54,15 +54,15 @@ namespace Assets {
             {
             case AssetImportingMode::Sync:
             {
-                asset = importer->Import(path);
+                asset = importer->Import(handle, filePath);
                 break;
             }
             case AssetImportingMode::Async:
             {
                 if (importer->IsSupportAsyncLoading())
-                    asset = importer->ImportAsync(path);
+                    asset = importer->ImportAsync(handle, filePath);
                 else
-                    asset = importer->Import(path);
+                    asset = importer->Import(handle, filePath);
                 break;
             }
             default: HE_ASSERT(false); break;
@@ -70,7 +70,7 @@ namespace Assets {
 
             if (asset)
             {
-                HE_INFO("AssetImporter::ImportAsset [{}][{}][{}ms]", magic_enum::enum_name<AssetType>(type), path.string(), t.ElapsedMilliseconds());
+                HE_INFO("AssetImporter::ImportAsset [{}][{}][{}ms]", magic_enum::enum_name<AssetType>(type), filePath.string(), t.ElapsedMilliseconds());
                 return asset;
             }
             else
@@ -79,49 +79,36 @@ namespace Assets {
             }
         }
 
-        HE_ERROR("No importer available for asset : {}", path.string());
+        HE_ERROR("No importer available for asset : {}", filePath.string());
         return {};
     }
 
-    void AssetImporter::SaveAsset(Asset asset, const std::filesystem::path& path)
+    void AssetImporter::SaveAsset(Asset asset, const std::filesystem::path& filePath)
     {
-        auto type = GetAssetTypeFromFileExtension(path.extension());
+        auto type = GetAssetTypeFromFileExtension(filePath.extension());
 
         if (type != AssetType::None)
         {
             auto& importer = importers[int(type)];
-            importer->Save(asset, path);
+            importer->Save(asset, filePath);
             return;
         }
 
-        HE_ERROR("No importer available for asset type: {}", path.string());
+        HE_ERROR("No importer available for asset type: {}", filePath.string());
     }
 
-    Asset AssetImporter::CreateNewAsset(const std::filesystem::path& filePath)
+    Asset AssetImporter::CreateAsset(AssetHandle handle, const std::filesystem::path& filePath)
     {
         auto type = GetAssetTypeFromFileExtension(filePath.extension());
         if (type != AssetType::None)
         {
             auto& importer = importers[int(type)];
-            return importer->Create(filePath);
+            return importer->Create(handle, filePath);
         }
 
         HE_ERROR("No Creator available for asset type: {}", magic_enum::enum_name<AssetType>(type));
         return {};
     }
-
-    Asset AssetImporter::CreateNewAsset(AssetType type)
-    {
-        if (type != AssetType::None)
-        {
-            auto& importer = importers[int(type)];
-            return importer->Create("");
-        }
-
-        return {};
-        HE_ERROR("No Creator available for asset type: {}", magic_enum::enum_name<AssetType>(type));
-    }
-
 
     AssetManager::AssetManager(nvrhi::DeviceHandle pDevice, const AssetManagerDesc& pDesc)
         : device(pDevice)
@@ -130,114 +117,70 @@ namespace Assets {
         assetImporter.Init(this);
     }
 
-    AssetType AssetManager::GetAssetType(AssetHandle handle) const
+    void AssetManager::Init(nvrhi::DeviceHandle pDevice, const AssetManagerDesc& pDesc)
     {
-        if (IsAssetHandleValid(handle))
-            return metaMap.at(handle).type;
-
-        return AssetType::None;
+      device = pDevice;
+      desc = pDesc;
+      assetImporter.Init(this);
     }
 
-    bool AssetManager::IsAssetFilePathValid(const std::filesystem::path& filePath)
+    Asset AssetManager::GetAsset(AssetHandle handle)
     {
-        return pathToHandleMap.contains(filePath);
-    }
+        if (!IsAssetHandleValid(handle))
+            return {};
 
-    AssetHandle AssetManager::GetAssetHandleFromFilePath(const std::filesystem::path& filePath)
-    {
-        if (IsAssetFilePathValid(filePath))
-            return pathToHandleMap.at(filePath);
-
-        return 0;
-    }
-
-    AssetHandle AssetManager::ImportAsset(const std::filesystem::path& filePath, bool loadToMemeory)
-    {
-        if (IsAssetFilePathValid(filePath))
-            return pathToHandleMap.at(filePath);
-
-        AssetHandle handle;
-        AssetMetadata metadata;
-
-        metadata.filePath = filePath;
-        metadata.type = assetImporter.GetAssetTypeFromFileExtension(filePath.extension());
-
-        if (metadata.type == AssetType::None)
+        Asset asset = FindAsset(handle);
+        if (!asset)
         {
-            HE_ERROR("[AssetManager] : {} is not supported asset", filePath.string());
-            return 0;
+            const AssetMetadata& metadata = GetMetadata(handle);
+            asset = assetImporter.ImportAsset(handle, metadata.filePath, desc.importMode);
         }
 
-        if (loadToMemeory)
-        {
-            Asset asset = assetImporter.ImportAsset(filePath, desc.importMode);
-
-            if (asset)
-            {
-                HE_INFO("[AssetManager] : import Asset from {}, loadToMemeory = {} ", filePath.string(), loadToMemeory);
-
-                asset.Get<AssetID>().id = handle;
-                
-                {
-                    std::scoped_lock<std::mutex> lock(metaMutex);
-
-                    assetMap[handle] = asset;
-                    metaMap[handle] = metadata;
-                    pathToHandleMap[filePath] = handle;
-                }
-
-                SerializeAssetRegistry();
-
-                return handle;
-            }
-            else
-            {
-                HE_ERROR("[AssetManager] : ImportAsset - asset import failed!");
-            }
-        }
-        else
-        {
-            {
-                std::scoped_lock<std::mutex> lock(metaMutex);
-
-                metaMap[handle] = metadata;
-                pathToHandleMap[filePath] = handle;
-            }
-           
-            SerializeAssetRegistry();
-
-            HE_INFO("import Asset from {}, loadToMemeory = {} ", metadata.filePath.string(), loadToMemeory);
-
-            return handle;
-        }
-
-        return 0;
+        return asset;
     }
 
-    Asset AssetManager::CreateNewAsset(const std::filesystem::path& filePath)
+    Asset AssetManager::FindAsset(AssetHandle handle)
+    {
+        if (assetMap.contains(handle))
+            return { assetMap.at(handle), this };
+
+        return {};
+    }
+
+    Asset AssetManager::CreateAsset(AssetHandle handle)
+    {
+        Asset asset;
+
+        std::scoped_lock<std::mutex> lock(registryMutex);
+        asset = { registry.create(), this };
+
+        asset.Add<AssetHandle>(handle);
+        asset.Add<AssetState>(AssetState::None);
+        asset.Add<AssetFlags>(AssetFlags::None);
+
+        assetMap[handle] = asset;
+
+        return asset;
+    }
+
+    Asset AssetManager::CreateAsset(const std::filesystem::path& filePath)
     {
         HE_PROFILE_FUNCTION();
 
-        AssetMetadata metadata;
-        Asset asset = assetImporter.CreateNewAsset(filePath);
-
-        metadata.filePath = filePath;
-        metadata.type = assetImporter.GetAssetTypeFromFileExtension(filePath.extension());
-        HE_ASSERT(metadata.type != AssetType::None);
+        AssetHandle handle;
+        Asset asset = assetImporter.CreateAsset(handle, filePath);
 
         if (asset)
         {
-            {
-                std::scoped_lock<std::mutex> lock(metaMutex);
+            auto handle = asset.GetHandle();
+            
+            AssetMetadata metadata;
+            metadata.filePath = filePath;
+            metadata.type = assetImporter.GetAssetTypeFromFileExtension(filePath.extension());
+            HE_VERIFY(metadata.type != AssetType::None);
 
-                auto assetID = asset.Get<AssetID>().id;
-
-                assetMap[assetID] = asset;
-                metaMap[assetID] = metadata;
-                pathToHandleMap[filePath] = assetID;
-            }
-
-            SerializeAssetRegistry();
+            RegisterMetadata(handle, metadata);
+            Serialize();
 
             for (auto& [id, subscriber] : subscribers)
                 subscriber->OnAssetCreated(asset);
@@ -248,44 +191,300 @@ namespace Assets {
         return {};
     }
 
-    void AssetManager::AddMemoryOnlyAsset(Asset asset, AssetType type)
+    AssetHandle AssetManager::GetOrMakeAsset(const std::filesystem::path& filePath, const std::filesystem::path& newAssetPath, bool overwriteExisting)
     {
         HE_PROFILE_FUNCTION();
 
-        AssetMetadata metadata;
+        std::filesystem::path absolute = desc.assetsDirectory / newAssetPath;
 
+        if (std::filesystem::exists(absolute) && !overwriteExisting)
+        {
+            return ImportAsset(newAssetPath, false);
+        }
+        else
+        {
+            if (!std::filesystem::exists(absolute.parent_path()))
+                std::filesystem::create_directories(absolute.parent_path());
+
+            std::filesystem::copy_options options;
+
+            if (overwriteExisting)
+                options |= std::filesystem::copy_options::overwrite_existing;
+
+            HE::FileSystem::Copy(filePath, absolute);
+            AssetHandle handle = ImportAsset(newAssetPath, false);
+
+            return handle;
+        }
+
+        return 0;
+    }
+
+    void AssetManager::MarkAsMemoryOnlyAsset(Asset asset, AssetType type)
+    {
+        HE_PROFILE_FUNCTION();
+
+        if (!asset || type == AssetType::None)
+            return;
+
+        auto handle = asset.GetHandle();
+        auto& flags = asset.Get<AssetFlags>();
+        flags |= AssetFlags::IsMemoryOnly;
+
+        AssetMetadata metadata;
         metadata.filePath = "";
         metadata.type = type;
+        RegisterMetadata(handle, metadata); // NOTE : This marks the asset as valid
+    }
 
-        HE_ASSERT(metadata.type != AssetType::None);
+    void AssetManager::DestroyAsset(AssetHandle handle)
+    {
+        Asset asset = FindAsset(handle);
+        DestroyAsset(asset);
+    }
 
-        if (asset)
-        {
-            {
-                std::scoped_lock<std::mutex> lock(metaMutex);
+    void AssetManager::DestroyAsset(Asset asset)
+    {
+        if (!asset)
+            return;
 
-                auto assetID = asset.Get<AssetID>().id;
-
-                assetMap[assetID] = asset;
-                metaMap[assetID] = metadata;
-            }
-
-            for (auto& [id, subscriber] : subscribers)
-                subscriber->OnAssetCreated(asset);
-        }
+        std::scoped_lock<std::mutex> lock(registryMutex);
+        assetMap.erase(asset.GetHandle());
+        registry.destroy(asset);
     }
 
     void AssetManager::SaveAsset(AssetHandle handle)
     {
         HE_PROFILE_FUNCTION();
 
+        if (!IsAssetHandleValid(handle))
+            return;
+
         Asset asset = GetAsset(handle);
         const AssetMetadata& meta = GetMetadata(handle);
-
         assetImporter.SaveAsset(asset, meta.filePath);
 
         for (auto& [id, subscriber] : subscribers)
             subscriber->OnAssetSaved(asset);
+    }
+
+    void AssetManager::ReloadAsset(AssetHandle handle)
+    {
+        HE_PROFILE_FUNCTION();
+
+        if (!IsAssetHandleValid(handle))
+        {
+            HE_ERROR("AssetManager::ReloadAsset {} : invalid asset handle", (uint64_t)handle);
+            return;
+        }
+
+        if (IsAssetLoaded(handle))
+            UnloadAsset(handle);
+
+        const auto& metadata = GetMetadata(handle);
+        Asset asset = assetImporter.ImportAsset(handle, metadata.filePath, desc.importMode);
+
+        if (!asset)
+        {
+            HE_ERROR("AssetManager::ReloadAsset : asset reload failed!");
+            return;
+        }
+
+        for (auto& [id, subscriber] : subscribers)
+            subscriber->OnAssetReloaded(asset);
+    }
+
+    void AssetManager::UnloadAsset(AssetHandle handle)
+    {
+        HE_PROFILE_FUNCTION();
+
+        auto asset = FindAsset(handle);
+        if (!asset)
+        {
+            HE_ERROR("[AssetManager] : UnloadAsset {} : Asset not loaded", magic_enum::enum_name<AssetType>(GetAssetType(handle)), (uint64_t)handle);
+            return;
+        }
+
+        HE_TRACE("Unload {}", magic_enum::enum_name<AssetType>(GetAssetType(handle)));
+
+        for (auto& [id, subscriber] : subscribers)
+            subscriber->OnAssetUnloaded(asset);
+
+        if (HE::HasFlags(asset.Get<AssetFlags>(), AssetFlags::IsMemoryOnly))
+            UnRegisterMetadata(handle);
+
+        if (asset.Has<AssetDependencies>())
+        {
+            for (auto handle : asset.Get<AssetDependencies>().dependencies)
+                UnloadAsset(handle);
+        }
+
+        DestroyAsset(asset);
+    }
+
+    void AssetManager::UnloadAllAssets()
+    {
+        HE_PROFILE_FUNCTION();
+
+        {
+            for (auto a : registry.view<Scene>())
+                UnloadAsset(Asset(a, this).GetHandle());
+        }
+
+        {
+            for (auto a : registry.view<MeshSource>())
+                UnloadAsset(Asset(a, this).GetHandle());
+        }
+
+        {
+            for (auto a : registry.view<Material>())
+                UnloadAsset(Asset(a, this).GetHandle());
+        }
+
+        {
+            for (auto a : registry.view<Texture>())
+                UnloadAsset(Asset(a, this).GetHandle());
+        }
+    }
+
+    void AssetManager::RemoveAsset(AssetHandle handle)
+    {
+        HE_PROFILE_FUNCTION();
+
+        if (!IsAssetHandleValid(handle))
+        {
+            HE_ERROR("[AssetManager] : RemoveAsset {} : invalid asset handle", (uint64_t)handle);
+            return;
+        }
+
+        for (auto& [id, subscriber] : subscribers)
+            subscriber->OnAssetRemoved(handle);
+
+        DestroyAsset(handle);
+        UnRegisterMetadata(handle);
+        Serialize();
+    }
+
+    AssetHandle AssetManager::ImportAsset(const std::filesystem::path& filePath, bool loadToMemeory)
+    {
+        if (IsAssetFilePathValid(filePath))
+            return pathToHandleMap.at(filePath);
+
+        auto type = assetImporter.GetAssetTypeFromFileExtension(filePath.extension());
+
+        if (type == AssetType::None)
+        {
+            HE_ERROR("AssetManager::ImportAsset {} is not supported asset", filePath.string());
+            return 0;
+        }
+
+        AssetHandle handle;
+
+        if (loadToMemeory)
+        {
+            Asset asset = assetImporter.ImportAsset(handle, filePath, desc.importMode);
+
+            if (!asset)
+            {
+                HE_ERROR("AssetManager::ImportAsset : Failed {}", filePath.string());
+                return 0;
+            }
+        }
+
+        AssetMetadata metadata;
+        metadata.filePath = filePath;
+        metadata.type = type;
+        RegisterMetadata(handle, metadata);
+
+        Serialize();
+
+        HE_INFO("import Asset from {}, loadToMemeory = {} ", metadata.filePath.string(), loadToMemeory);
+
+        return handle;
+    }
+
+    bool AssetManager::RegisterMetadata(AssetHandle handle, const AssetMetadata& meta)
+    {
+        if (metaMap.contains(handle))
+        {
+            HE_ERROR("AssetManager::RegisterAssetMetaData : asset {} : {}, already exists", (uint64_t)handle, meta.filePath.string());
+            return false;
+        }
+
+        std::scoped_lock<std::mutex> lock(metaMutex);
+
+        metaMap[handle] = meta;
+        pathToHandleMap[meta.filePath] = handle;
+
+        return true;
+    }
+
+    void AssetManager::UnRegisterMetadata(AssetHandle handle)
+    {
+        std::scoped_lock<std::mutex> lock(metaMutex);
+
+        if (metaMap.contains(handle))
+            metaMap.erase(handle);
+
+        auto& path = GetMetadata(handle).filePath;
+        if (pathToHandleMap.contains(path))
+            pathToHandleMap.erase(path);
+    }
+
+    bool AssetManager::UpdateMetadate(AssetHandle handle, const AssetMetadata& metadata)
+    {
+        if (IsAssetHandleValid(handle))
+        {
+            HE_ERROR("AssetManager::UpdateMetadate : invalid AssetHandle {} ", (uint64_t)handle);
+            return false;
+        }
+
+        UnRegisterMetadata(handle);
+        RegisterMetadata(handle, metadata);
+
+        Serialize();
+
+        return true;
+    }
+
+    const AssetMetadata& AssetManager::GetMetadata(AssetHandle handle) const
+    {
+        if (metaMap.contains(handle))
+            return metaMap.at(handle);
+
+        static AssetMetadata s_NullMetadata;
+        return s_NullMetadata;
+    }
+
+    AssetType AssetManager::GetAssetType(AssetHandle handle) const
+    {
+        if (IsAssetHandleValid(handle))
+            return metaMap.at(handle).type;
+
+        return AssetType::None;
+    }
+
+    const std::filesystem::path& AssetManager::GetFilePath(AssetHandle handle) const
+    {
+        return GetMetadata(handle).filePath;
+    }
+
+    AssetHandle AssetManager::GetAssetHandleFromFilePath(const std::filesystem::path& filePath)
+    {
+        if (IsAssetFilePathValid(filePath))
+            return pathToHandleMap.at(filePath);
+
+        return 0;
+    }
+
+    std::filesystem::path AssetManager::GetAssetFileSystemPath(AssetHandle handle) const
+    {
+        return desc.assetsDirectory / GetMetadata(handle).filePath;
+    }
+
+    bool AssetManager::IsAssetFilePathValid(const std::filesystem::path& filePath)
+    {
+        return pathToHandleMap.contains(filePath);
     }
 
     SubscriberHandle AssetManager::Subscribe(AssetEventCallback* assetEventCallback)
@@ -311,208 +510,6 @@ namespace Assets {
         HE_ERROR("[AssetManager] : Invalid Subscriber handle");
     }
 
-    AssetHandle AssetManager::GetOrMakeAsset(const std::filesystem::path& filePath, const std::filesystem::path& newAssetPath, bool overwriteExisting)
-    {
-        HE_PROFILE_FUNCTION();
-
-        std::filesystem::path absolute = desc.assetsDirectory / newAssetPath;
-
-        if (std::filesystem::exists(absolute) && !overwriteExisting)
-        {
-            AssetHandle handle = GetAssetHandleFromFilePath(newAssetPath);
-            if (!handle)
-            {
-                handle = ImportAsset(newAssetPath, false);
-            }
-
-            return handle;
-        }
-        else
-        {
-            if (!std::filesystem::exists(absolute.parent_path()))
-                std::filesystem::create_directories(absolute.parent_path());
-
-            std::filesystem::copy_options options;
-
-            if (overwriteExisting)
-                options |= std::filesystem::copy_options::overwrite_existing;
-
-            HE::FileSystem::Copy(filePath, absolute);
-            AssetHandle handle = ImportAsset(newAssetPath, false);
-
-            return handle;
-        }
-
-        return 0;
-    }
-
-    void AssetManager::ReloadAsset(AssetHandle handle)
-    {
-        HE_PROFILE_FUNCTION();
-
-        if (!metaMap.contains(handle))
-        {
-            HE_ERROR("[AssetManager] : ReloadAsset {} : invalid asset handle", (uint64_t)handle);
-            return;
-        }
-
-        if (assetMap.contains(handle))
-            UnloadAsset(handle);
-
-        const AssetMetadata& metadata = GetMetadata(handle);
-        Asset asset = assetImporter.ImportAsset(metadata.filePath, desc.importMode);
-
-        if (!asset)
-        {
-            HE_ERROR("[AssetManager] :  asset reload failed!");
-            return;
-        }
-
-        {
-            std::scoped_lock<std::mutex> lock(registryMutex);
-            assetMap[handle] = asset;
-        }
-
-        for (auto& [id, subscriber] : subscribers)
-            subscriber->OnAssetReloaded(asset);
-    }
-
-    void AssetManager::RemoveAsset(AssetHandle handle)
-    {
-        HE_PROFILE_FUNCTION();
-
-        if (!metaMap.contains(handle))
-        {
-            HE_ERROR("[AssetManager] : RemoveAsset {} : invalid asset handle", (uint64_t)handle);
-            return;
-        }
-
-        for (auto& [id, subscriber] : subscribers)
-            subscriber->OnAssetRemoved(handle);
-
-        {
-            std::scoped_lock<std::mutex> lock(metaMutex);
-           
-            auto& path = GetMetadata(handle).filePath;
-            if (pathToHandleMap.contains(path))
-                pathToHandleMap.erase(path);
-
-            if (assetMap.contains(handle))
-                assetMap.erase(handle);
-
-            metaMap.erase(handle);
-        }
-
-        SerializeAssetRegistry();
-    }
-
-    void AssetManager::ChangeAssetPath(AssetHandle handle, const std::filesystem::path& newPath)
-    {
-        if (metaMap.contains(handle))
-        {
-            {
-                std::scoped_lock<std::mutex> lock(metaMutex);
-
-                pathToHandleMap.erase(metaMap.at(handle).filePath);
-                pathToHandleMap[newPath] = handle;
-            }
-
-            metaMap.at(handle).filePath = newPath;
-
-            SerializeAssetRegistry();
-        }
-    }
-
-    const AssetMetadata& AssetManager::GetMetadata(AssetHandle handle) const
-    {
-        if (metaMap.contains(handle))
-            return metaMap.at(handle);
-
-        static AssetMetadata s_NullMetadata;
-        return s_NullMetadata;
-    }
-
-    const std::filesystem::path& AssetManager::GetFilePath(AssetHandle handle) const
-    {
-        return GetMetadata(handle).filePath;
-    }
-
-    std::filesystem::path AssetManager::GetAssetFileSystemPath(AssetHandle handle) const
-    {
-        return desc.assetsDirectory / GetMetadata(handle).filePath;
-    }
-
-    Asset AssetManager::GetAsset(AssetHandle handle)
-    {
-        if (!IsAssetHandleValid(handle))
-            return {};
-
-        Asset asset = {};
-        if (IsAssetLoaded(handle))
-        {
-            asset = assetMap.at(handle);
-        }
-        else
-        {
-            const AssetMetadata& metadata = GetMetadata(handle);
-            asset = assetImporter.ImportAsset(metadata.filePath, desc.importMode);
-            if (asset)
-            {
-                {
-                    std::scoped_lock<std::mutex> lock(registryMutex);
-                    assetMap[handle] = asset;
-                }
-                
-                asset.Get<AssetID>().id = handle;
-            }
-        }
-
-        return asset;
-    }
-
-    void AssetManager::UnloadAsset(AssetHandle handle)
-    {
-        HE_PROFILE_FUNCTION();
-
-        auto asset = FindAsset(handle);
-        if (!asset)
-        {
-            HE_ERROR("[AssetManager] : UnloadAsset {} : Asset not loaded", (uint64_t)handle);
-            return;
-        }
-
-        HE_TRACE("Unload {}", magic_enum::enum_name<AssetType>(asset.GetType()));
-
-        for (auto& [id, subscriber] : subscribers)
-            subscriber->OnAssetUnloaded(asset);
-
-        if (asset.Has<MeshSource>())
-        {
-            auto& ms = asset.Get<MeshSource>();
-
-            for (int i = 0; auto handle : ms.GetDependencies())
-                UnloadAsset(handle);
-        }
-
-        // remove memeory only asset
-        if (GetMetadata(handle).filePath.empty())
-            metaMap.erase(handle);
-
-        DestroyAsset(asset);
-    }
-
-    void AssetManager::UnloadAllAssets()
-    {
-        HE_PROFILE_FUNCTION();
-
-        auto view = registry.view<AssetID>();
-        for (auto a : view)
-        {
-            Asset asset = { a , this };
-            UnloadAsset(asset.GetHandle());
-        }
-    }
-
     void AssetManager::OnAssetLoaded(Asset asset)
     {
         HE_PROFILE_FUNCTION();
@@ -521,40 +518,7 @@ namespace Assets {
             subscriber->OnAssetLoaded(asset);
     }
 
-    Asset AssetManager::CreateAsset(AssetType type)
-    {
-        std::scoped_lock<std::mutex> lock(registryMutex);
-
-        Asset asset = { registry.create(), this };
-
-        auto& ic = asset.Add<AssetID>();
-        auto& as = asset.Add<AssetState>();
-
-        assetMap[ic.id] = asset;
-
-        return asset;
-    }
-
-    void AssetManager::DestroyAsset(Asset asset)
-    {
-        if (!asset)
-            return;
-
-        std::scoped_lock<std::mutex> lock(registryMutex);
-
-        assetMap.erase(asset.GetHandle());
-        registry.destroy(asset);
-    }
-
-    Asset AssetManager::FindAsset(AssetHandle handle)
-    {
-        if (assetMap.contains(handle))
-            return { assetMap.at(handle), this };
-
-        return {};
-    }
-
-    void AssetManager::SerializeAssetRegistry()
+    void AssetManager::Serialize()
     {
         HE_PROFILE_FUNCTION();
 
@@ -596,7 +560,7 @@ namespace Assets {
         file.close();
     }
 
-    bool AssetManager::DeserializeAssetRegistry()
+    bool AssetManager::Deserialize()
     {
         HE_PROFILE_FUNCTION();
 

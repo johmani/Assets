@@ -59,6 +59,8 @@ export namespace Assets {
     // Basic
     //////////////////////////////////////////////////////////////////////////
 
+    constexpr uint32_t c_Invalid = ~0u;
+
     template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
     struct RandomID
     {
@@ -259,6 +261,34 @@ export namespace Assets {
         Font
     };
 
+    struct AssetMetadata
+    {
+        AssetType type = AssetType::None;
+        std::filesystem::path filePath;
+
+        operator bool() const { return type != AssetType::None; }
+    };
+
+    enum class AssetFlags
+    {
+        None = 0,
+        IsMemoryOnly = BIT(0)
+    };
+    HE_ENUM_CLASS_FLAG_OPERATORS(AssetFlags)
+
+    struct AssetDependencies
+    {
+        std::vector<AssetHandle> dependencies;
+    };
+
+    enum class AssetState : uint8_t
+    {
+        None,
+        Failed,
+        Loading,
+        Loaded
+    };
+
     enum class AssetImportingMode : uint8_t
     {
         Sync,
@@ -288,7 +318,7 @@ export namespace Assets {
     struct Material
     {
         std::string name = "None";
-        Math::float4 baseColor = { 1.0f,1.0f ,1.0f ,1.0f };
+        Math::float4 baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
 
         AssetHandle baseTextureHandle = 0;
         UVSet uvSet = UVSet::UV0;
@@ -298,7 +328,7 @@ export namespace Assets {
     // MeshSource
     //////////////////////////////////////////////////////////////////////////
 
-    enum class VertexAttribute
+    enum class VertexAttribute : uint8_t
     {
         Position,
         Normal,
@@ -329,15 +359,15 @@ export namespace Assets {
     struct Mesh;
     struct MeshGeometry
     {
-        Mesh* mesh;
+        Mesh* mesh = nullptr;
         MeshGeometryPrimitiveType type = MeshGeometryPrimitiveType::Triangles;
         Math::box3 aabb;
         uint32_t indexOffsetInMesh = 0;
         uint32_t vertexOffsetInMesh = 0;
         uint32_t indexCount = 0;
         uint32_t vertexCount = 0;
-        uint32_t globalGeometryIndex = 0;
         AssetHandle materailHandle = 0;
+        uint32_t index = 0;
 
         template<typename T> T* GetAttribute(VertexAttribute attr);
         template<typename T> std::span<T> GetAttributeSpan(VertexAttribute attr);
@@ -349,18 +379,17 @@ export namespace Assets {
     struct MeshSource;
     struct Mesh
     {
-        std::string name;
-        MeshSource* meshSource;
+        std::string name = "None";
+        MeshSource* meshSource = nullptr;
         MeshType type = MeshType::Triangles;
         Math::box3 aabb;
         uint32_t indexOffset = 0;
         uint32_t indexCount = 0;
         uint32_t vertexOffset = 0;
         uint32_t vertexCount = 0;
-        uint32_t globalMeshIndex = 0;
         uint32_t geometryOffset = 0;
         uint32_t geometryCount = 0;
-
+        uint32_t index = 0;
         nvrhi::rt::AccelStructHandle accelStruct;
 
         template<typename T> T* GetAttribute(VertexAttribute attr);
@@ -370,17 +399,22 @@ export namespace Assets {
         ASSETS_API std::span<MeshGeometry> GetGeometrySpan();
     };
 
+    struct MeshSourecHierarchy;
     struct Node
     {
         std::string name = "None";
         Math::float4x4 transform;
-
         uint32_t childrenOffset = 0;
         uint32_t childrenCount = 0;
-        int meshIndex = -1;
-        MeshSource* meshSource;
+        uint32_t meshIndex = c_Invalid;
 
-        ASSETS_API std::span<Node> GetChildren();
+        ASSETS_API std::span<Node> GetChildren(MeshSourecHierarchy& meshSourecHierarchy);
+    };
+
+    struct MeshSourecHierarchy
+    {
+        std::vector<Node> nodes;
+        Node root;
     };
 
     struct MeshSource
@@ -388,29 +422,16 @@ export namespace Assets {
         std::array<nvrhi::BufferRange, magic_enum::enum_count<VertexAttribute>()> vertexBufferRanges;
         std::vector<uint32_t> cpuIndexBuffer;
         std::vector<uint8_t>  cpuVertexBuffer; // [position][Normal][Tangent][...]
-        uint32_t vertexCount = 0;
-
-        std::vector<AssetHandle> dependencies; // [material][textures]
-        uint32_t materialCount = 0;
-        uint32_t textureCount = 0;
-
         std::vector<Mesh> meshes;
         std::vector<MeshGeometry> geometries;
-        std::vector<Node> nodes;
-        Node root;
-
-        nvrhi::BufferHandle indexBuffer;
-        nvrhi::BufferHandle vertexBuffer;
-        DescriptorHandle indexBufferDescriptor;
-        DescriptorHandle vertexBufferDescriptor;
+        uint32_t vertexCount = 0;
+        uint32_t materialCount = 0;
+        uint32_t textureCount = 0;
 
         template<typename T> T* GetAttribute(VertexAttribute attr);
         template<typename T> std::span<T> GetAttributeSpan(VertexAttribute attr);
         bool HasAttribute(VertexAttribute attr) const { return vertexBufferRanges[int(attr)].byteSize != 0; }
         const nvrhi::BufferRange& getVertexBufferRange(VertexAttribute attr) const { return vertexBufferRanges[int(attr)]; }
-        std::span<AssetHandle> GetMaterialSpan() { return materialCount != 0 ? std::span<AssetHandle>(dependencies.data(), materialCount) : std::span<AssetHandle>(); }
-        std::span<AssetHandle> GetTextureSpan() { return textureCount != 0 ? std::span<AssetHandle>(dependencies.data() + materialCount, textureCount) : std::span<AssetHandle>(); }
-        std::span<AssetHandle> GetDependencies() { return std::span<AssetHandle>(dependencies.data(), dependencies.size()); };
     };
 
     const nvrhi::BufferRange MeshGeometry::GetVertexRange(VertexAttribute attr) const
@@ -419,16 +440,10 @@ export namespace Assets {
         return nvrhi::BufferRange(mesh->meshSource->getVertexBufferRange(attr).byteOffset + (mesh->vertexOffset + vertexOffsetInMesh) * attrSize, vertexCount * attrSize);
     }
 
-    const nvrhi::BufferRange MeshGeometry::GetIndexRange() const
-    {
-        return nvrhi::BufferRange((mesh->indexOffset + indexOffsetInMesh) * sizeof(uint32_t), indexCount * sizeof(uint32_t));
-    }
+    const nvrhi::BufferRange MeshGeometry::GetIndexRange() const { return nvrhi::BufferRange((mesh->indexOffset + indexOffsetInMesh) * sizeof(uint32_t), indexCount * sizeof(uint32_t)); }
 
     template<typename T>
-    T* MeshGeometry::GetAttribute(VertexAttribute attr)
-    {
-        return reinterpret_cast<T*>(mesh->meshSource->cpuVertexBuffer.data() + (mesh->vertexOffset + vertexOffsetInMesh) * sizeof(T));
-    }
+    T* MeshGeometry::GetAttribute(VertexAttribute attr) { return reinterpret_cast<T*>(mesh->meshSource->cpuVertexBuffer.data() + (mesh->vertexOffset + vertexOffsetInMesh) * sizeof(T)); }
 
     template<typename T>
     std::span<T> MeshGeometry::GetAttributeSpan(VertexAttribute attr)
@@ -438,21 +453,12 @@ export namespace Assets {
         return std::span<T>(ptr, vertexCount);
     }
 
-    uint32_t* MeshGeometry::Getindices()
-    {
-        return mesh->meshSource->cpuIndexBuffer.data() + mesh->indexOffset + indexOffsetInMesh;
-    }
+    uint32_t* MeshGeometry::Getindices() { return mesh->meshSource->cpuIndexBuffer.data() + mesh->indexOffset + indexOffsetInMesh; }
 
-    std::span<MeshGeometry> Assets::Mesh::GetGeometrySpan()
-    {
-        return std::span<MeshGeometry>(meshSource->geometries.data() + geometryOffset, geometryCount);
-    }
+    std::span<MeshGeometry> Assets::Mesh::GetGeometrySpan() { return std::span<MeshGeometry>(meshSource->geometries.data() + geometryOffset, geometryCount); }
 
     template<typename T>
-    T* Mesh::GetAttribute(VertexAttribute attr)
-    {
-        return reinterpret_cast<T*>(meshSource->cpuVertexBuffer.data() + vertexOffset * sizeof(T));
-    }
+    T* Mesh::GetAttribute(VertexAttribute attr) { return reinterpret_cast<T*>(meshSource->cpuVertexBuffer.data() + vertexOffset * sizeof(T)); }
 
     template<typename T>
     std::span<T> Mesh::GetAttributeSpan(VertexAttribute attr)
@@ -462,15 +468,9 @@ export namespace Assets {
         return std::span<T>(ptr, vertexCount);
     }
 
-    uint32_t* Mesh::Getindices()
-    {
-        return meshSource->cpuIndexBuffer.data() + indexOffset;
-    }
+    uint32_t* Mesh::Getindices() { return meshSource->cpuIndexBuffer.data() + indexOffset; }
 
-    const nvrhi::BufferRange Mesh::GetIndexRange() const
-    {
-        return nvrhi::BufferRange(indexOffset * sizeof(uint32_t), indexCount * sizeof(uint32_t));
-    }
+    const nvrhi::BufferRange Mesh::GetIndexRange() const { return nvrhi::BufferRange(indexOffset * sizeof(uint32_t), indexCount * sizeof(uint32_t)); }
 
     template<typename T>
     T* MeshSource::GetAttribute(VertexAttribute attr)
@@ -487,12 +487,9 @@ export namespace Assets {
         return std::span<T>(ptr, vertexCount);
     }
 
-    std::span<Node> Node::GetChildren()
+    std::span<Node> Node::GetChildren(MeshSourecHierarchy& meshSourecHierarchy)
     {
-        if (!childrenCount)
-            return std::span<Node>();
-
-        return std::span<Node>(&meshSource->nodes[childrenOffset], childrenCount);
+        return childrenCount ? std::span<Node>(&meshSourecHierarchy.nodes[childrenOffset], childrenCount) : std::span<Node>();;
     }
 
     //////////////////////////////////////////////////////////////////////////
@@ -610,14 +607,14 @@ export namespace Assets {
         template<typename T>
         T& GetComponent()
         {
-            HE_VERIFY(HasComponent<T>(), "Entity does not have component!");
+            HE_ASSERT(HasComponent<T>(), "Entity does not have component!");
             return scene->registry.get<T>(handle);
         }
 
         template<typename... T>
         bool HasComponent()
         {
-            HE_VERIFY(scene && scene->registry.valid(handle), "Entity handle not valid");
+            HE_ASSERT(scene && scene->registry.valid(handle), "Entity handle not valid");
 
             // Check if all specified components exist
             if constexpr (sizeof...(T) == 1)
@@ -636,7 +633,6 @@ export namespace Assets {
             HE_VERIFY(HasComponent<T>(), "Entity does not have component!");
             scene->registry.remove<T>(handle);
         }
-
 
         const UUID GetUUID() { return GetComponent<IDComponent>().id; }
         const std::string& GetName() { return GetComponent<NameComponent>().name; }
@@ -658,50 +654,27 @@ export namespace Assets {
     // AssetManager
     //////////////////////////////////////////////////////////////////////////
 
-    struct AssetMetadata
-    {
-        AssetType type = AssetType::None;
-        std::filesystem::path filePath;
-
-        operator bool() const { return type != AssetType::None; }
-    };
-
-    struct AssetID
-    {
-        AssetHandle id;
-    };
-
-    enum class AssetState
-    {
-        None,
-        Failed,
-        Loading,
-        Loaded
-    };
-
     struct AssetManager;
     struct Asset
     {
-        entt::entity handle{ entt::null };
+        entt::entity id = entt::null;
         AssetManager* assetManager = nullptr;
 
-        AssetType GetType();
         AssetState GetState() { return Get<AssetState>(); };
-        AssetHandle GetHandle() { return Get<AssetID>().id; };
+        AssetHandle GetHandle() { return Get<AssetHandle>(); };
 
         Asset() = default;
-        Asset(entt::entity pHandle, AssetManager* pAssetManager) : handle(pHandle), assetManager(pAssetManager) {}
+        Asset(entt::entity pHandle, AssetManager* pAssetManager) : id(pHandle), assetManager(pAssetManager) {}
         Asset(const Asset& other) = default;
 
-        bool operator==(const Asset& other) const { return handle == other.handle; }
+        bool operator==(const Asset& other) const { return id == other.id; }
         bool operator!=(const Asset& other) const { return !(*this == other); }
 
         operator bool() const;
-        operator entt::entity() const { return handle; }
-        operator uint32_t() const { return (uint32_t)handle; }
+        operator entt::entity() const { return id; }
+        operator uint32_t() const { return (uint32_t)id; }
 
         template<typename T, typename... Args> T& Add(Args&&... args);
-        template<typename T, typename... Args> T& AddOrReplace(Args&&... args);
         template<typename T>                   T& Get();
         template<typename... T>              bool Has();
         template<typename T>                 void Remove();
@@ -710,7 +683,6 @@ export namespace Assets {
     struct AssetEventCallback
     {
         virtual ~AssetEventCallback() {}
-
         virtual void OnAssetUnloaded(Asset asset) {}
         virtual void OnAssetLoaded(Asset asset) {}
         virtual void OnAssetReloaded(Asset asset) {}
@@ -721,10 +693,10 @@ export namespace Assets {
 
     struct IAssetImporter
     {
-        virtual Asset Import(const std::filesystem::path& metadata) = 0;
-        virtual Asset ImportAsync(const std::filesystem::path& metadata) { return {}; };
-        virtual void Save(Asset asset, const std::filesystem::path& metadata) = 0;
-        virtual Asset Create(const std::filesystem::path& filePath) = 0;
+        virtual Asset Import(AssetHandle handle, const std::filesystem::path& fielPath) = 0;
+        virtual Asset ImportAsync(AssetHandle handle, const std::filesystem::path& filePath) { return {}; };
+        virtual Asset Create(AssetHandle handle, const std::filesystem::path& filePath) = 0;
+        virtual void Save(Asset asset, const std::filesystem::path& filePath) = 0;
         virtual bool IsSupportAsyncLoading() { return false; }
     };
 
@@ -734,12 +706,10 @@ export namespace Assets {
         std::array<HE::Scope<IAssetImporter>, magic_enum::enum_count<AssetType>()> importers;
 
         void Init(AssetManager* assetManager);
-
-        ASSETS_API Asset ImportAsset(const std::filesystem::path& metadata, AssetImportingMode mode);
-        ASSETS_API Asset CreateNewAsset(const std::filesystem::path& filePath);
-        ASSETS_API Asset CreateNewAsset(AssetType type);
-        ASSETS_API void SaveAsset(Asset asset, const std::filesystem::path& metadata);
-        ASSETS_API AssetType GetAssetTypeFromFileExtension(const std::filesystem::path& extension);
+        Asset ImportAsset(AssetHandle handle, const std::filesystem::path& filePath, AssetImportingMode mode);
+        Asset CreateAsset(AssetHandle handle, const std::filesystem::path& filePath);
+        void SaveAsset(Asset asset, const std::filesystem::path& filePath);
+        AssetType GetAssetTypeFromFileExtension(const std::filesystem::path& extension);
     };
 
     struct AssetManagerDesc
@@ -751,65 +721,76 @@ export namespace Assets {
 
     struct AssetManager
     {
-        nvrhi::DeviceHandle device;
         AssetManagerDesc desc;
-        
+        nvrhi::DeviceHandle device;
         entt::registry registry;
         std::map<AssetHandle, Asset> assetMap;
         std::map<AssetHandle, AssetMetadata> metaMap;
         std::unordered_map<std::filesystem::path, AssetHandle> pathToHandleMap;
-        
         std::unordered_map<SubscriberHandle, AssetEventCallback*> subscribers;
         AssetImporter assetImporter;
         uint32_t asyncTaskCount = 0;
         std::mutex registryMutex;
-        std::mutex assetMutex;
         std::mutex metaMutex;
+        std::mutex assetMutex;
 
+        AssetManager() = default;
         ASSETS_API AssetManager(nvrhi::DeviceHandle device, const AssetManagerDesc& desc);
+        ASSETS_API void Init(nvrhi::DeviceHandle device, const AssetManagerDesc& desc);
+        
         ASSETS_API Asset GetAsset(AssetHandle handle);
-        ASSETS_API Asset CreateNewAsset(const std::filesystem::path& filePath);
-        ASSETS_API void SaveAsset(AssetHandle handle);
+        template<typename T> T* GetAsset(AssetHandle handle);
+        ASSETS_API Asset FindAsset(AssetHandle handle);
+
+        ASSETS_API Asset CreateAsset(AssetHandle handle);
+        ASSETS_API Asset CreateAsset(const std::filesystem::path& filePath);
         ASSETS_API AssetHandle GetOrMakeAsset(const std::filesystem::path& filePath, const std::filesystem::path& newAssetPath, bool overwriteExisting = false);
-        ASSETS_API void AddMemoryOnlyAsset(Asset asset, AssetType type);
+        ASSETS_API void MarkAsMemoryOnlyAsset(Asset asset, AssetType type);
+
+        ASSETS_API void DestroyAsset(AssetHandle handle);
+        ASSETS_API void DestroyAsset(Asset asset);
+
+        ASSETS_API void SaveAsset(AssetHandle handle);
         ASSETS_API void ReloadAsset(AssetHandle handle);
         ASSETS_API void UnloadAsset(AssetHandle handle);
         ASSETS_API void UnloadAllAssets();
         ASSETS_API void RemoveAsset(AssetHandle handle);
         ASSETS_API AssetHandle ImportAsset(const std::filesystem::path& filePath, bool loadToMemeory = true);
-        ASSETS_API AssetType GetAssetType(AssetHandle handle) const;
-        ASSETS_API bool IsAssetFilePathValid(const std::filesystem::path& filePath);
-        ASSETS_API AssetHandle GetAssetHandleFromFilePath(const std::filesystem::path& filePath);
-        ASSETS_API void ChangeAssetPath(AssetHandle handle, const std::filesystem::path& newPath); // newPath is relative to project asset directory
+
+        ASSETS_API bool RegisterMetadata(AssetHandle handle, const AssetMetadata& meta);
+        ASSETS_API void UnRegisterMetadata(AssetHandle handle);
+        ASSETS_API bool UpdateMetadate(AssetHandle handle, const AssetMetadata& metadata);
         ASSETS_API const AssetMetadata& GetMetadata(AssetHandle handle) const;
+        ASSETS_API AssetType GetAssetType(AssetHandle handle) const;
         ASSETS_API const std::filesystem::path& GetFilePath(AssetHandle handle) const;
+        ASSETS_API AssetHandle GetAssetHandleFromFilePath(const std::filesystem::path& filePath);
         ASSETS_API std::filesystem::path GetAssetFileSystemPath(AssetHandle handle) const;
+        ASSETS_API bool IsAssetFilePathValid(const std::filesystem::path& filePath);
+
+        inline bool IsAssetHandleValid(AssetHandle handle) const { return handle != 0 && metaMap.contains(handle); }
+        inline bool IsAssetLoaded(AssetHandle handle) const { return assetMap.contains(handle); }
+
         ASSETS_API SubscriberHandle Subscribe(AssetEventCallback* assetEventCallback);
         ASSETS_API void UnSubscribe(SubscriberHandle handle);
-        ASSETS_API void SerializeAssetRegistry();
-        ASSETS_API bool DeserializeAssetRegistry();
-        ASSETS_API Asset CreateAsset(AssetType type);
-        ASSETS_API Asset FindAsset(AssetHandle handle);
-        ASSETS_API void DestroyAsset(Asset asset);
-        void OnAssetLoaded(Asset asset);
-        bool IsAssetHandleValid(AssetHandle handle) const { return handle != 0 && metaMap.contains(handle); }
-        bool IsAssetLoaded(AssetHandle handle) const { return assetMap.contains(handle); }
 
-        template<typename T>
-        T* GetAsset(AssetHandle handle)
-        {
-            auto asset = GetAsset(handle);
-            if (asset)
-            {
-                return asset.Has<T>() ? &asset.Get<T>() : nullptr;
-            }
-
-            return nullptr;
-        }
+        ASSETS_API void OnAssetLoaded(Asset asset);
+        ASSETS_API void Serialize();
+        ASSETS_API bool Deserialize();
     };
 
-    inline AssetType Asset::GetType() { return assetManager->GetAssetType(GetHandle()); };
-    inline Asset::operator bool() const { return  assetManager && assetManager->registry.valid(handle); }
+    template<typename T>
+    T* AssetManager::GetAsset(AssetHandle handle)
+    {
+        auto asset = GetAsset(handle);
+        if (asset)
+        {
+            return asset.Has<T>() ? &asset.Get<T>() : nullptr;
+        }
+
+        return nullptr;
+    }
+
+    inline Asset::operator bool() const { return  assetManager && assetManager->registry.valid(id); }
 
     template<typename T, typename ...Args>
     T& Asset::Add(Args&& ...args)
@@ -817,7 +798,7 @@ export namespace Assets {
         HE_VERIFY(!Has<T>());
 
        std::scoped_lock<std::mutex> lock(assetManager->assetMutex);
-       T& assetData = assetManager->registry.emplace<T>(handle, std::forward<Args>(args)...);
+       T& assetData = assetManager->registry.emplace<T>(id, std::forward<Args>(args)...);
 
        return assetData;
     }
@@ -825,23 +806,23 @@ export namespace Assets {
     template<typename T>
     T& Asset::Get()
     {
-        HE_VERIFY(Has<T>());
-        return assetManager->registry.get<T>(handle);
+        HE_ASSERT(Has<T>());
+        return assetManager->registry.get<T>(id);
     }
 
     template<typename ...T>
     bool Asset::Has()
     {
-        HE_VERIFY(assetManager && assetManager->registry.valid(handle), "Asset handle not valid");
+        HE_ASSERT(assetManager && assetManager->registry.valid(id), "Asset id not valid");
 
         // Check if all specified AssetData exist
         if constexpr (sizeof...(T) == 1)
         {
-            return assetManager->registry.try_get<T...>(handle) != nullptr;
+            return assetManager->registry.try_get<T...>(id) != nullptr;
         }
         else
         {
-            return std::apply([](auto&&... args) { return ((args != nullptr) && ...); }, assetManager->registry.try_get<T...>(handle));
+            return std::apply([](auto&&... args) { return ((args != nullptr) && ...); }, assetManager->registry.try_get<T...>(id));
         }
     }
    
@@ -851,7 +832,7 @@ export namespace Assets {
         HE_VERIFY(Has<T>());
 
         std::scoped_lock<std::mutex> lock(assetManager->assetMutex);
-        assetManager->registry.remove<T>(handle);
+        assetManager->registry.remove<T>(id);
     }
 
     //////////////////////////////////////////////////////////////////////////
@@ -863,12 +844,11 @@ export namespace Assets {
         AssetManager* assetManager;
 
         SceneImporter(AssetManager* assetManager);
-        Asset Import(const std::filesystem::path& filePath) override;
-        Asset ImportAsync(const std::filesystem::path& filePath) override;
+        Asset Import(AssetHandle handle, const std::filesystem::path& filePath) override;
+        Asset ImportAsync(AssetHandle handle, const std::filesystem::path& filePath) override;
+        Asset Create(AssetHandle handle, const std::filesystem::path& filePath) override;
         void  Save(Asset asset, const std::filesystem::path& filePath) override;
-        Asset Create(const std::filesystem::path& filePath) override;
         bool  IsSupportAsyncLoading() override { return false; }
-
     };
 
     struct TextureImporter : public IAssetImporter
@@ -876,10 +856,10 @@ export namespace Assets {
         AssetManager* assetManager;
 
         TextureImporter(AssetManager* assetManager);
-        Asset Import(const std::filesystem::path& filePath) override;
-        Asset ImportAsync(const std::filesystem::path& filePath) override;
+        Asset Import(AssetHandle handle, const std::filesystem::path& filePath) override;
+        Asset ImportAsync(AssetHandle handle, const std::filesystem::path& filePath) override;
+        Asset Create(AssetHandle handle, const std::filesystem::path& filePath) override;
         void  Save(Asset asset, const std::filesystem::path& filePath) override;
-        Asset Create(const std::filesystem::path& filePath) override;
         bool  IsSupportAsyncLoading() override { return true; }
     };
 
@@ -888,10 +868,10 @@ export namespace Assets {
         AssetManager* assetManager;
 
         MeshSourceImporter(AssetManager* assetManager);
-        Asset Import(const std::filesystem::path& filePath) override;
-        Asset ImportAsync(const std::filesystem::path& filePath) override;
+        Asset Import(AssetHandle handle, const std::filesystem::path& filePath) override;
+        Asset ImportAsync(AssetHandle handle, const std::filesystem::path& filePath) override;
+        Asset Create(AssetHandle handle, const std::filesystem::path& filePath) override;
         void  Save(Asset asset, const std::filesystem::path& filePath) override;
-        Asset Create(const std::filesystem::path& filePath) override;
         bool  IsSupportAsyncLoading() override { return true; }
     };
 
