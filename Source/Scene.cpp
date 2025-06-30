@@ -349,7 +349,7 @@ namespace Assets {
         std::ofstream file(filePath);
         if (!file.is_open())
         {
-            HE_ERROR("Unable to open file for writing, {}", filePath.string());
+            HE_ERROR("SerializeScene : Unable to open file for writing, {}", filePath.string());
         }
 
         std::ostringstream out;

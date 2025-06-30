@@ -139,8 +139,8 @@ namespace Assets {
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
+        auto& texture = asset.Get<Texture>();
         auto handle = asset.GetHandle();
-        auto& texture = asset.Add<Texture>();
         auto& state = asset.Get<AssetState>();
         state = AssetState::Loading;
 
@@ -801,6 +801,7 @@ namespace Assets {
 
                 AssetHandle newHandle;
                 auto texture = assetManager->CreateAsset(newHandle);
+                texture.Add<Texture>();
                 ImportTexture(assetManager, texture, HE::Buffer{ dataPtr, dataSize }, assetManager->device, name);
                 assetDependencies.dependencies[meshSource.materialCount + i] = texture.GetHandle();
             }
@@ -849,6 +850,11 @@ namespace Assets {
 
             cgltf_options options = {};
             cgltf_data* data = LoadGltfData(options, cStrFilePath);
+            if (!data)
+            {
+                assetManager->DestroyAsset(asset);
+                return;
+            }
 
             auto& assetDependencies = asset.Add<AssetDependencies>(); // [material][texture]
             assetDependencies.dependencies.resize(data->materials_count + data->textures_count);
@@ -880,6 +886,7 @@ namespace Assets {
 
                     AssetHandle newHandle;
                     auto texture = assetManager->CreateAsset(newHandle);
+                    texture.Add<Texture>();
                     auto task = tf.emplace([this, texture, dataPtr, dataSize, name]() { ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name); });
                     textureTasks.emplace_back(task);
                     assetManager->asyncTaskCount++;

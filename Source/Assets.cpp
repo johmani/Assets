@@ -172,8 +172,6 @@ namespace Assets {
 
         if (asset)
         {
-            auto handle = asset.GetHandle();
-            
             AssetMetadata metadata;
             metadata.filePath = filePath;
             metadata.type = assetImporter.GetAssetTypeFromFileExtension(filePath.extension());
