@@ -776,6 +776,7 @@ export namespace Assets {
         ASSETS_API void OnAssetLoaded(Asset asset);
         ASSETS_API void Serialize();
         ASSETS_API bool Deserialize();
+        ASSETS_API void Reset();
     };
 
     template<typename T>

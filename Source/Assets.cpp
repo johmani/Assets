@@ -582,4 +582,17 @@ namespace Assets {
 
         return true;
     }
+
+    void AssetManager::Reset()
+    {
+        UnloadAllAssets();
+
+        desc = {};
+        registry.clear();
+        assetMap.clear();
+        metaMap.clear();
+        pathToHandleMap.clear();
+        subscribers.clear();
+        asyncTaskCount = 0;
+    }
 }
