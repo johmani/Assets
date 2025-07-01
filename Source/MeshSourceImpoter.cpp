@@ -707,6 +707,19 @@ namespace Assets {
                 }
             }
 
+            material.emissiveColor = { cgltfMat.emissive_factor[0], cgltfMat.emissive_factor[1], cgltfMat.emissive_factor[2] };
+
+            if (cgltfMat.has_emissive_strength)
+            {
+                material.emissiveEV = cgltfMat.emissive_strength.emissive_strength;
+            }
+
+            if (cgltfMat.emissive_texture.texture)
+            {
+                uint32_t index = uint32_t(cgltfMat.emissive_texture.texture - data->textures);
+                material.emissiveTextureHandle = dependencies[materialCount + index];  // NOTE : DO NOT FORGET TO ADD materialCount
+            }
+
             dependencies[i] = newHandle;
             assetState = AssetState::Loaded;
             assetManager->MarkAsMemoryOnlyAsset(asset, AssetType::Material);

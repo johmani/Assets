@@ -320,7 +320,12 @@ export namespace Assets {
         std::string name = "None";
         Math::float4 baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
 
+        Math::float3 emissiveColor = { 0.0f, 0.0f, 0.0f };
+        float emissiveEV = 0.0f;							  // Range(-24, 24)
+
         AssetHandle baseTextureHandle = 0;
+        AssetHandle emissiveTextureHandle = 0;
+
         UVSet uvSet = UVSet::UV0;
     };
 
