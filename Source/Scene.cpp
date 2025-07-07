@@ -264,6 +264,21 @@ namespace Assets {
             out << "\t\t\t\t\"meshIndex\" : " << c.meshIndex << "\n";
             out << "\t\t\t}\n";
         }
+
+        if (entity.HasComponent<DirectionalLightComponent>())
+        {
+            out << "\t\t\t,\n";
+
+            auto& c = entity.GetComponent<DirectionalLightComponent>();
+
+            out << "\t\t\t\"DirectionalLightComponent\" : {\n";
+            out << "\t\t\t\t\"color\" : " << c.color << ",\n";
+            out << "\t\t\t\t\"intensity\" : " << c.intensity << ",\n";
+            out << "\t\t\t\t\"angularRadius\" : " << c.angularRadius << ",\n";
+            out << "\t\t\t\t\"haloSize\" : " << c.haloSize << ",\n";
+            out << "\t\t\t\t\"haloFalloff\" : " << c.haloFalloff << "\n";
+            out << "\t\t\t}\n";
+        }
     }
 
     void DeserializEntity(simdjson::dom::element element, Scene& scene)
@@ -324,6 +339,33 @@ namespace Assets {
 
             if(!meshComponent["meshIndex"].error())
                 c.meshIndex = (uint32_t)meshComponent["meshIndex"].get_uint64().value();
+        }
+
+        const auto& directionalLightComponent = element["DirectionalLightComponent"];
+        if (!directionalLightComponent.error())
+        {
+            auto& c = deserializedEntity.AddComponent<DirectionalLightComponent>();
+
+            if (!directionalLightComponent["color"].error())
+            {
+                c.color = {
+                    (float)directionalLightComponent["color"].get_array().at(0).get_double().value(),
+                    (float)directionalLightComponent["color"].get_array().at(1).get_double().value(),
+                    (float)directionalLightComponent["color"].get_array().at(2).get_double().value()
+                };
+            }
+
+            if (!directionalLightComponent["intensity"].error())
+                c.intensity = (float)directionalLightComponent["intensity"].get_double().value();
+
+            if (!directionalLightComponent["angularRadius"].error())
+                c.angularRadius = (float)directionalLightComponent["angularRadius"].get_double().value();
+
+            if (!directionalLightComponent["haloSize"].error())
+                c.haloSize = (float)directionalLightComponent["haloSize"].get_double().value();
+
+            if (!directionalLightComponent["haloFalloff"].error())
+                c.haloFalloff = (float)directionalLightComponent["haloFalloff"].get_double().value();
         }
     }
 
