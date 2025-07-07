@@ -679,14 +679,31 @@ namespace Assets {
             {
                 const cgltf_float* base_color = cgltfMat.pbr_metallic_roughness.base_color_factor;
                 material.baseColor = { base_color[0], base_color[1], base_color[2], base_color[3] };
+                material.metallic = cgltfMat.pbr_metallic_roughness.metallic_factor;
+                material.roughness = cgltfMat.pbr_metallic_roughness.roughness_factor;
 
                 cgltf_int index = cgltfMat.pbr_metallic_roughness.base_color_texture.texcoord;
                 material.uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
 
                 if (cgltfMat.pbr_metallic_roughness.base_color_texture.texture)
                 {
-                    uint32_t index = uint32_t(cgltfMat.pbr_metallic_roughness.base_color_texture.texture - data->textures);
+                    cgltf_size index = cgltfMat.pbr_metallic_roughness.base_color_texture.texture - data->textures;
                     material.baseTextureHandle = dependencies[materialCount + index];
+                }
+
+                if (cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture)
+                {
+                    cgltf_size textureIndex = cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture - data->textures;
+                    material.metallicRoughnessTextureHandle = dependencies[materialCount + index];
+                }
+
+                if (cgltfMat.pbr_metallic_roughness.base_color_texture.has_transform)
+                {
+                    cgltf_texture_transform transform = cgltfMat.pbr_metallic_roughness.base_color_texture.transform;
+
+                    material.offset   = { transform.offset[0], transform.offset[1] };
+                    material.scale    = { transform.scale[0],  transform.scale[1]  };
+                    material.rotation = transform.rotation;
                 }
             }
 
@@ -700,22 +717,39 @@ namespace Assets {
 
                 if (cgltfMat.pbr_specular_glossiness.diffuse_texture.texture)
                 {
-                    uint32_t index = uint32_t(cgltfMat.pbr_specular_glossiness.diffuse_texture.texture - data->textures);
+                    cgltf_size index = cgltfMat.pbr_specular_glossiness.diffuse_texture.texture - data->textures;
                     material.baseTextureHandle = dependencies[materialCount + index];
+                }
+
+                if (cgltfMat.pbr_specular_glossiness.diffuse_texture.has_transform)
+                {
+                    cgltf_texture_transform transform = cgltfMat.pbr_specular_glossiness.diffuse_texture.transform;
+
+                    material.offset   = { transform.offset[0], transform.offset[1] };
+                    material.scale    = { transform.scale[0],  transform.scale[1]  };
+                    material.rotation = transform.rotation;
                 }
             }
 
-            material.emissiveColor = { cgltfMat.emissive_factor[0], cgltfMat.emissive_factor[1], cgltfMat.emissive_factor[2] };
-
-            if (cgltfMat.has_emissive_strength)
             {
-                material.emissiveEV = cgltfMat.emissive_strength.emissive_strength;
+                material.emissiveColor = { cgltfMat.emissive_factor[0], cgltfMat.emissive_factor[1], cgltfMat.emissive_factor[2] };
+                
+                if (cgltfMat.has_emissive_strength)
+                {
+                    material.emissiveEV = cgltfMat.emissive_strength.emissive_strength;
+                }
+
+                if (cgltfMat.emissive_texture.texture)
+                {
+                    cgltf_size index = cgltfMat.emissive_texture.texture - data->textures;
+                    material.emissiveTextureHandle = dependencies[materialCount + index];
+                }
             }
 
-            if (cgltfMat.emissive_texture.texture)
+            if (cgltfMat.normal_texture.texture)
             {
-                uint32_t index = uint32_t(cgltfMat.emissive_texture.texture - data->textures);
-                material.emissiveTextureHandle = dependencies[materialCount + index];  // NOTE : DO NOT FORGET TO ADD materialCount
+                cgltf_size index = cgltfMat.normal_texture.texture - data->textures; // NOTE : DO NOT FORGET TO ADD materialCount
+                material.normalTextureHandle = dependencies[materialCount + index];
             }
 
             dependencies[i] = newHandle;

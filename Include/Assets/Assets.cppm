@@ -319,14 +319,24 @@ export namespace Assets {
     {
         std::string name = "None";
         Math::float4 baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+        
+        float metallic = 0.0f;								  // Range(0, 1)
+        float roughness = 0.5f;								  // Range(0, 1)
+        float reflectance = 0.35f;                            // Range(0, 1)
 
         Math::float3 emissiveColor = { 0.0f, 0.0f, 0.0f };
         float emissiveEV = 0.0f;							  // Range(-24, 24)
 
         AssetHandle baseTextureHandle = 0;
         AssetHandle emissiveTextureHandle = 0;
+        AssetHandle metallicRoughnessTextureHandle = 0;
+        AssetHandle normalTextureHandle = 0;
 
+        // NOTE: a single transform/uvSet should handle most cases. consider refactoring it later if more flexibility is needed.
         UVSet uvSet = UVSet::UV0;
+        glm::vec2 offset = { 0.0f, 0.0f };
+        glm::vec2 scale = { 1.0f, 1.0f };
+        float rotation = 0.0f;
     };
 
     //////////////////////////////////////////////////////////////////////////
