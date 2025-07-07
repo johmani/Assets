@@ -556,6 +556,9 @@ export namespace Assets {
     {
         AssetHandle meshSourceHandle = 0;
         uint32_t meshIndex = 0;
+
+        MeshComponent() = default;
+        MeshComponent(AssetHandle pHandle, uint32_t pMeshIndex) : meshSourceHandle(pHandle), meshIndex(pMeshIndex) {}
     };
 
     struct DirectionalLightComponent
