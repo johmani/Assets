@@ -558,6 +558,15 @@ export namespace Assets {
         uint32_t meshIndex = 0;
     };
 
+    struct DirectionalLightComponent
+    {
+        Math::float3 color = { 0.98f, 0.92f, 0.89f };
+        float intensity = 110000.0f;
+        float angularRadius = 1.9f;
+        float haloSize = 10.0f;
+        float haloFalloff = 80.0f;
+    };
+
     template<typename... Component>
     struct ComponentGroup {};
 
