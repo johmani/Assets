@@ -8,9 +8,13 @@ import Math;
 import std;
 
 #define HE_PROFILE_COLOR 0xAA0000
-#define HE_PROFILE_MAIN_THREAD 0xAAAA00
 
 namespace Assets {
+
+    struct TextureInfo
+    {
+        bool isSRGB;
+    };
 
     MeshSourceImporter::MeshSourceImporter(AssetManager* pAssetManager)
         : assetManager(pAssetManager)
@@ -135,12 +139,12 @@ namespace Assets {
         }
     }
 
-    static void ImportTexture(AssetManager* assetManager, Asset asset, HE::Buffer buffer, nvrhi::IDevice* device, const std::string& name)
+    static void ImportTexture(AssetManager* assetManager, Asset asset, HE::Buffer buffer, nvrhi::IDevice* device, const std::string& name, bool isSRGB)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
-        auto& texture = asset.Get<Texture>();
         auto handle = asset.GetHandle();
+        auto& texture = asset.Get<Texture>();
         auto& state = asset.Get<AssetState>();
         state = AssetState::Loading;
 
@@ -150,29 +154,23 @@ namespace Assets {
         nvrhi::TextureDesc desc;
         desc.width = image.GetWidth();
         desc.height = image.GetHeight();
-        desc.format = nvrhi::Format::RGBA8_UNORM;
+        desc.format = isSRGB ? nvrhi::Format::SRGBA8_UNORM : nvrhi::Format::RGBA8_UNORM;
+        desc.initialState = nvrhi::ResourceStates::ShaderResource;
         desc.debugName = name;
+        desc.keepInitialState = true;
         texture.texture = device->createTexture(desc);
 
-        HE::Jops::SubmitToMainThread([assetManager, device, handle, desc, data, name]() {
+        HE::Jops::SubmitToMainThread([assetManager, device, asset, data]() mutable {
 
-            auto asset = assetManager->FindAsset(handle);
             auto& texture = asset.Get<Texture>();
             auto& state = asset.Get<AssetState>();
-
             assetManager->MarkAsMemoryOnlyAsset(asset, AssetType::Texture2D);
 
             auto commandList = device->createCommandList({ .enableImmediateExecution = false });
-
             commandList->open();
-            commandList->beginTrackingTextureState(texture.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
-            commandList->writeTexture(texture.texture, 0, 0, data, desc.width * 4);
-            commandList->setPermanentTextureState(texture.texture, nvrhi::ResourceStates::ShaderResource);
-            commandList->commitBarriers();
+            commandList->writeTexture(texture.texture, 0, 0, data, texture.texture->getDesc().width * 4);
             commandList->close();
             device->executeCommandList(commandList);
-            device->runGarbageCollection();
-            commandList.Reset();
 
             std::free(data);
             state = AssetState::Loaded;
@@ -729,7 +727,36 @@ namespace Assets {
         HE_INFO("Import Memory Only materials [{}][{}ms]", data->materials_count, t.ElapsedMilliseconds());
     }
 
-    static void AppendNodes( Asset asset, cgltf_data* data, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
+    static void GetTexturesInfo(cgltf_data* data, std::unordered_map<const cgltf_texture*, TextureInfo>& textures)
+    {
+        for (int i = 0; i < data->materials_count; ++i)
+        {
+            const cgltf_material& cgltfMat = data->materials[i];
+
+            auto base_color_texture = cgltfMat.pbr_metallic_roughness.base_color_texture.texture;
+            if (cgltfMat.has_pbr_metallic_roughness && base_color_texture && !textures.contains(base_color_texture))
+            {
+                auto& t = textures[base_color_texture];
+                t.isSRGB = true;
+            }
+
+            auto diffuse_texture = cgltfMat.pbr_specular_glossiness.diffuse_texture.texture;
+            if (cgltfMat.has_pbr_specular_glossiness && diffuse_texture && textures.contains(diffuse_texture))
+            {
+                auto& t = textures[diffuse_texture];
+                t.isSRGB = true;
+            }
+
+            auto emissive_texture = cgltfMat.emissive_texture.texture;
+            if (cgltfMat.has_pbr_specular_glossiness && emissive_texture && textures.contains(emissive_texture))
+            {
+                auto& t = textures[cgltfMat.emissive_texture.texture];
+                t.isSRGB = true;
+            }
+        }
+    }
+
+    static void AppendNodes(Asset asset, cgltf_data* data, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
     {
         HE::Timer t;
 
@@ -798,6 +825,9 @@ namespace Assets {
         std::unordered_map<const cgltf_material*, Asset> materials;
         std::unordered_map<const cgltf_mesh*, Mesh*> meshMap;
 
+        std::unordered_map<const cgltf_texture*, TextureInfo> textures;
+        GetTexturesInfo(data, textures);
+
         //  Textures 
         {
             HE::Timer t;
@@ -815,7 +845,9 @@ namespace Assets {
                 AssetHandle newHandle;
                 auto texture = assetManager->CreateAsset(newHandle);
                 texture.Add<Texture>();
-                ImportTexture(assetManager, texture, HE::Buffer{ dataPtr, dataSize }, assetManager->device, name);
+
+                bool isSRGB = textures.contains(cgltfTexture) ? textures.at(cgltfTexture).isSRGB : false;
+                ImportTexture(assetManager, texture, HE::Buffer{ dataPtr, dataSize }, assetManager->device, name, isSRGB);
                 assetDependencies.dependencies[meshSource.materialCount + i] = texture.GetHandle();
             }
 
@@ -883,6 +915,9 @@ namespace Assets {
             std::vector<tf::Task> textureTasks;
             textureTasks.reserve(data->textures_count);
 
+            std::unordered_map<const cgltf_texture*, TextureInfo> textures;
+            GetTexturesInfo(data, textures);
+
             // Textures
             {
                 HE::Timer t;
@@ -900,7 +935,9 @@ namespace Assets {
                     AssetHandle newHandle;
                     auto texture = assetManager->CreateAsset(newHandle);
                     texture.Add<Texture>();
-                    auto task = tf.emplace([this, texture, dataPtr, dataSize, name]() { ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name); });
+
+                    bool isSRGB = textures.contains(cgltfTexture) ? textures.at(cgltfTexture).isSRGB : false;
+                    auto task = tf.emplace([this, texture, dataPtr, dataSize, name, isSRGB]() { ImportTexture(assetManager, texture, HE::Buffer{ dataPtr ,dataSize }, assetManager->device, name, isSRGB); });
                     textureTasks.emplace_back(task);
                     assetManager->asyncTaskCount++;
 
