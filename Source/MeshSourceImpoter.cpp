@@ -682,8 +682,10 @@ namespace Assets {
                 material.metallic = cgltfMat.pbr_metallic_roughness.metallic_factor;
                 material.roughness = cgltfMat.pbr_metallic_roughness.roughness_factor;
 
-                cgltf_int index = cgltfMat.pbr_metallic_roughness.base_color_texture.texcoord;
-                material.uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
+                {
+                    cgltf_int index = cgltfMat.pbr_metallic_roughness.base_color_texture.texcoord;
+                    material.uvSet = index == 0 ? UVSet::UV0 : UVSet::UV1;
+                }
 
                 if (cgltfMat.pbr_metallic_roughness.base_color_texture.texture)
                 {
@@ -693,7 +695,7 @@ namespace Assets {
 
                 if (cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture)
                 {
-                    cgltf_size textureIndex = cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture - data->textures;
+                    cgltf_size index = cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture - data->textures;
                     material.metallicRoughnessTextureHandle = dependencies[materialCount + index];
                 }
 

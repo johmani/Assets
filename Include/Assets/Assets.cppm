@@ -328,9 +328,9 @@ export namespace Assets {
         float emissiveEV = 0.0f;							  // Range(-24, 24)
 
         AssetHandle baseTextureHandle = 0;
-        AssetHandle emissiveTextureHandle = 0;
-        AssetHandle metallicRoughnessTextureHandle = 0;
         AssetHandle normalTextureHandle = 0;
+        AssetHandle metallicRoughnessTextureHandle = 0;
+        AssetHandle emissiveTextureHandle = 0;
 
         // NOTE: a single transform/uvSet should handle most cases. consider refactoring it later if more flexibility is needed.
         UVSet uvSet = UVSet::UV0;
