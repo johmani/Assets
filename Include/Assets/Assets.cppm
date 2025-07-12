@@ -552,6 +552,31 @@ export namespace Assets {
         }
     };
 
+    struct CameraComponent
+    {
+        enum class ProjectionType { Perspective = 0, Orthographic = 1 };
+
+        bool isPrimary = true;
+        ProjectionType projectionType = ProjectionType::Perspective;
+
+        float perspectiveFieldOfView = 60.0f;
+        float perspectiveNear = 0.001f;
+        float perspectiveFar = 1000.0f;
+
+        float orthographicSize = 5.0f;
+        float orthographicNear = 0.1f;
+        float orthographicFar = 100.0f;
+
+        struct DepthOfField
+        {
+            bool enabled = false;
+            bool enableVisualFocusDistance = false;
+            float apertureRadius = 1.0f;
+            float focusFalloff = 0.0f;
+            float focusDistance = 10.0f;
+        }depthOfField;
+    };
+
     struct MeshComponent
     {
         AssetHandle meshSourceHandle = 0;
@@ -576,7 +601,9 @@ export namespace Assets {
     using AllComponents = ComponentGroup <
         TransformComponent,
         RelationshipComponent,
-        MeshComponent
+        CameraComponent,
+        MeshComponent,
+        DirectionalLightComponent
     >;
 
     struct Entity;
@@ -597,7 +624,10 @@ export namespace Assets {
         ASSETS_API Entity FindEntity(UUID id);
         ASSETS_API Math::float4x4 ConvertToWorldSpace(Entity entity);
         ASSETS_API Math::float4x4 ConvertToLocalSpace(Entity entity, Math::float4x4 wt);
+
+        ASSETS_API static void Copy(Assets::Scene& src, Assets::Scene& dst);
     };
+
 
     struct Entity
     {

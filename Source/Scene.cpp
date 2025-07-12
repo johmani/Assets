@@ -5,6 +5,7 @@ import HE;
 import Math;
 import std;
 import simdjson;
+import magic_enum;
 
 namespace Assets {
 
@@ -199,6 +200,68 @@ namespace Assets {
     }
 
 
+    template<typename... Component>
+    static void CopyComponent(entt::registry& dst, entt::registry& src, const std::unordered_map<Assets::UUID, entt::entity>& enttMap)
+    {
+        ([&]()
+            {
+                auto view = src.view<Component>();
+                for (auto srcEntity : view)
+                {
+                    entt::entity dstEntity = enttMap.at(src.get<Assets::IDComponent>(srcEntity).id);
+                    auto& srcComponent = src.get<Component>(srcEntity);
+                    dst.emplace_or_replace<Component>(dstEntity, srcComponent);
+                }
+            }(), ...);
+    }
+
+    template<typename... Component>
+    static void CopyComponent(Assets::ComponentGroup<Component...>, entt::registry& dst, entt::registry& src, const std::unordered_map<Assets::UUID, entt::entity>& enttMap)
+    {
+        CopyComponent<Component...>(dst, src, enttMap);
+    }
+
+    template<typename... Component>
+    static void CopyComponentIfExists(Assets::Entity& dst, Assets::Entity& src)
+    {
+        ([&]()
+            {
+                if (src.HasComponent<Component>())
+                {
+                    dst.AddOrReplaceComponent<Component>(src.GetComponent<Component>());
+                }
+            }(), ...);
+    }
+
+    template<typename... Component>
+    static void CopyComponentIfExists(Assets::ComponentGroup<Component...>, Assets::Entity& dst, Assets::Entity& src)
+    {
+        CopyComponentIfExists<Component...>(dst, src);
+    }
+
+    void Scene::Copy(Assets::Scene& src, Assets::Scene& dst)
+    {
+        dst.rootID = src.rootID;
+        dst.name = src.name + " copy";
+
+        auto& srcSceneRegistry = src.registry;
+        auto& dstSceneRegistry = dst.registry;
+        std::unordered_map<Assets::UUID, entt::entity> enttMap;
+
+        auto view = srcSceneRegistry.view<Assets::IDComponent>();
+        for (auto e : view)
+        {
+            Assets::UUID uuid = srcSceneRegistry.get<Assets::IDComponent>(e).id;
+            const auto& name = srcSceneRegistry.get<Assets::NameComponent>(e).name;
+            const auto& parent = srcSceneRegistry.get<Assets::RelationshipComponent>(e).parent;
+            Assets::Entity newEntity = dst.CreateEntityWithUUID(uuid, name, parent);
+            enttMap[uuid] = (entt::entity)newEntity;
+        }
+
+        // Copy components (except IDComponent and NameComponent)
+        CopyComponent(Assets::AllComponents{}, dstSceneRegistry, srcSceneRegistry, enttMap);
+    }
+
 #pragma endregion
 
 #pragma region SceneImporter
@@ -250,6 +313,34 @@ namespace Assets {
             out << "\t\t\t\t\"position\" : " << c.position << ",\n";
             out << "\t\t\t\t\"rotation\" : " << c.rotation.GetEuler() << ",\n";
             out << "\t\t\t\t\"scale\" : " << c.scale << "\n";
+            out << "\t\t\t}\n";
+        }
+
+        if (entity.HasComponent<CameraComponent>())
+        {
+            out << "\t\t\t,\n";
+
+            auto& c = entity.GetComponent<CameraComponent>();
+
+            out << "\t\t\t\"CameraComponent\" : {\n";
+            
+            out << "\t\t\t\t\"isPrimary\" : " << (c.isPrimary ? "true" : "false") << ",\n";
+            out << "\t\t\t\t\"projectionType\" : \"" << magic_enum::enum_name<CameraComponent::ProjectionType>(c.projectionType) << "\",\n";
+            
+            out << "\t\t\t\t\"perspectiveFieldOfView\" : "  << c.perspectiveFieldOfView << ",\n";
+            out << "\t\t\t\t\"perspectiveNear\" : " << c.perspectiveNear << ",\n";
+            out << "\t\t\t\t\"perspectiveFar\" : "  << c.perspectiveFar << ",\n";
+
+            out << "\t\t\t\t\"orthographicSize\" : "  << c.orthographicSize << ",\n";
+            out << "\t\t\t\t\"orthographicNear\" : " << c.orthographicNear << ",\n";
+            out << "\t\t\t\t\"orthographicFar\" : "  << c.orthographicFar << ",\n";
+
+            out << "\t\t\t\t\"depthOfField.enabled\" : "  << (c.depthOfField.enabled ? "true" : "false") << ",\n";
+            out << "\t\t\t\t\"depthOfField.enableVisualFocusDistance\" : "  << (c.depthOfField.enableVisualFocusDistance ? "true" : "false") << ",\n";
+            out << "\t\t\t\t\"depthOfField.apertureRadius\" : " << c.depthOfField.apertureRadius << ",\n";
+            out << "\t\t\t\t\"depthOfField.focusFalloff\" : " << c.depthOfField.focusFalloff << ",\n";
+            out << "\t\t\t\t\"depthOfField.focusDistance\" : " << c.depthOfField.focusDistance << "\n";
+
             out << "\t\t\t}\n";
         }
 
@@ -328,6 +419,53 @@ namespace Assets {
                     (float)transformComponent["scale"].get_array().at(2).get_double().value()
                 };
             }
+        }
+
+        const auto& cameraComponent = element["CameraComponent"];
+        if (!cameraComponent.error())
+        {
+            auto& c = deserializedEntity.AddComponent<CameraComponent>();
+            
+            if (!cameraComponent["projectionType"].error())
+                c.projectionType = magic_enum::enum_cast<CameraComponent::ProjectionType>(cameraComponent["projectionType"].get_c_str().value()).value();
+
+            if (!cameraComponent["perspectiveFieldOfViewB"].error())
+                c.perspectiveFieldOfView = (float)cameraComponent["perspectiveFieldOfView"].get_double().value();
+
+            if (!cameraComponent["perspectiveNear"].error())
+                c.perspectiveNear = (float)cameraComponent["perspectiveNear"].get_double().value();
+
+            if (!cameraComponent["perspectiveFar"].error())
+                c.perspectiveFar = (float)cameraComponent["perspectiveFar"].get_double().value();
+
+
+            if (!cameraComponent["orthographicSize"].error())
+                c.orthographicSize = (float)cameraComponent["orthographicSize"].get_double().value();
+
+            if (!cameraComponent["orthographicNear"].error())
+                c.orthographicNear = (float)cameraComponent["orthographicNear"].get_double().value();
+
+            if (!cameraComponent["orthographicFar"].error())
+                c.orthographicFar = (float)cameraComponent["orthographicFar"].get_double().value();
+
+
+            if (!cameraComponent["isPrimary"].error())
+                c.isPrimary = cameraComponent["isPrimary"].get_bool().value();
+
+            if (!cameraComponent["depthOfField.enabled"].error())
+                c.depthOfField.enabled = cameraComponent["depthOfField.enabled"].get_bool().value();
+
+            if (!cameraComponent["depthOfField.enableVisualFocusDistance"].error())
+                c.depthOfField.enableVisualFocusDistance = cameraComponent["depthOfField.enableVisualFocusDistance"].get_bool().value();
+
+            if (!cameraComponent["depthOfField.apertureRadius"].error())
+                c.depthOfField.apertureRadius = (float)cameraComponent["depthOfField.apertureRadius"].get_double().value();
+
+            if (!cameraComponent["depthOfField.focusFalloff"].error())
+                c.depthOfField.focusFalloff = (float)cameraComponent["depthOfField.focusFalloff"].get_double().value();
+
+            if (!cameraComponent["depthOfField.focusDistance"].error())
+                c.depthOfField.focusDistance = (float)cameraComponent["depthOfField.focusDistance"].get_double().value();
         }
 
         const auto& meshComponent = element["MeshComponent"];
