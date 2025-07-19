@@ -370,6 +370,19 @@ namespace Assets {
             out << "\t\t\t\t\"haloFalloff\" : " << c.haloFalloff << "\n";
             out << "\t\t\t}\n";
         }
+
+        if (entity.HasComponent<DynamicSkyLightComponent>())
+        {
+            out << "\t\t\t,\n";
+
+            auto& c = entity.GetComponent<DynamicSkyLightComponent>();
+
+            out << "\t\t\t\"DynamicSkyLightComponent\" : {\n";
+            out << "\t\t\t\t\"color\" : " << c.groundColor << ",\n";
+            out << "\t\t\t\t\"color\" : " << c.horizonSkyColor << ",\n";
+            out << "\t\t\t\t\"color\" : " << c.zenithSkyColor << "\n";
+            out << "\t\t\t}\n";
+        }
     }
 
     void DeserializEntity(simdjson::dom::element element, Scene& scene)
@@ -504,6 +517,39 @@ namespace Assets {
 
             if (!directionalLightComponent["haloFalloff"].error())
                 c.haloFalloff = (float)directionalLightComponent["haloFalloff"].get_double().value();
+        }
+
+        const auto& dynamicSkyLightComponent = element["DynamicSkyLightComponent"];
+        if (!dynamicSkyLightComponent.error())
+        {
+            auto& c = deserializedEntity.AddComponent<DynamicSkyLightComponent>();
+
+            if (!dynamicSkyLightComponent["groundColor"].error())
+            {
+                c.groundColor = {
+                    (float)dynamicSkyLightComponent["groundColor"].get_array().at(0).get_double().value(),
+                    (float)dynamicSkyLightComponent["groundColor"].get_array().at(1).get_double().value(),
+                    (float)dynamicSkyLightComponent["groundColor"].get_array().at(2).get_double().value()
+                };
+            }
+
+            if (!dynamicSkyLightComponent["horizonSkyColor"].error())
+            {
+                c.horizonSkyColor = {
+                  (float)dynamicSkyLightComponent["horizonSkyColor"].get_array().at(0).get_double().value(),
+                  (float)dynamicSkyLightComponent["horizonSkyColor"].get_array().at(1).get_double().value(),
+                  (float)dynamicSkyLightComponent["horizonSkyColor"].get_array().at(2).get_double().value()
+                };
+            }
+
+            if (!dynamicSkyLightComponent["zenithSkyColor"].error())
+            {
+                c.zenithSkyColor = {
+                    (float)dynamicSkyLightComponent["zenithSkyColor"].get_array().at(0).get_double().value(),
+                    (float)dynamicSkyLightComponent["zenithSkyColor"].get_array().at(1).get_double().value(),
+                    (float)dynamicSkyLightComponent["zenithSkyColor"].get_array().at(2).get_double().value()
+                };
+            }
         }
     }
 

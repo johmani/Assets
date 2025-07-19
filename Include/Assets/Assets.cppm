@@ -595,6 +595,13 @@ export namespace Assets {
         float haloFalloff = 80.0f;
     };
 
+    struct DynamicSkyLightComponent
+    {
+        Math::float3 groundColor = { 0.35f, 0.3f, 0.35f };
+        Math::float3 horizonSkyColor = { 1.0f, 1.0f, 1.0f };
+        Math::float3 zenithSkyColor = { 0.07f, 0.36f, 0.72f };
+    };
+
     template<typename... Component>
     struct ComponentGroup {};
 
@@ -603,7 +610,8 @@ export namespace Assets {
         RelationshipComponent,
         CameraComponent,
         MeshComponent,
-        DirectionalLightComponent
+        DirectionalLightComponent,
+        DynamicSkyLightComponent
     >;
 
     struct Entity;
