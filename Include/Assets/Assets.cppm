@@ -590,8 +590,8 @@ export namespace Assets {
         {
             bool enabled = false;
             bool enableVisualFocusDistance = false;
-            float apertureRadius = 1.0f;
-            float focusFalloff = 0.0f;
+            float apertureRadius = 0.003f;
+            float focusFalloff = 0.015f;
             float focusDistance = 10.0f;
         }depthOfField;
     };
