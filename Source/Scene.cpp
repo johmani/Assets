@@ -442,7 +442,7 @@ namespace Assets {
             if (!cameraComponent["projectionType"].error())
                 c.projectionType = magic_enum::enum_cast<CameraComponent::ProjectionType>(cameraComponent["projectionType"].get_c_str().value()).value();
 
-            if (!cameraComponent["perspectiveFieldOfViewB"].error())
+            if (!cameraComponent["perspectiveFieldOfView"].error())
                 c.perspectiveFieldOfView = (float)cameraComponent["perspectiveFieldOfView"].get_double().value();
 
             if (!cameraComponent["perspectiveNear"].error())
