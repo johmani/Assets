@@ -414,6 +414,13 @@ export namespace Assets {
         ASSETS_API std::span<MeshGeometry> GetGeometrySpan();
     };
 
+    enum class NodeType
+    {
+        None,
+        Mesh,
+        Camera
+    };
+
     struct MeshSourecHierarchy;
     struct Node
     {
@@ -421,7 +428,8 @@ export namespace Assets {
         Math::float4x4 transform;
         uint32_t childrenOffset = 0;
         uint32_t childrenCount = 0;
-        uint32_t meshIndex = c_Invalid;
+        uint32_t index = c_Invalid;
+        NodeType type = NodeType::None;
 
         ASSETS_API std::span<Node> GetChildren(MeshSourecHierarchy& meshSourecHierarchy);
     };
@@ -432,6 +440,16 @@ export namespace Assets {
         Node root;
     };
 
+    struct CameraNode
+    {
+        bool hasAspectRatio;
+        float aspectRatio;
+        float yfov;
+        bool  hasZfar;
+        float zFar;
+        float zNear;
+    };
+
     struct MeshSource
     {
         std::array<nvrhi::BufferRange, magic_enum::enum_count<VertexAttribute>()> vertexBufferRanges;
@@ -439,6 +457,7 @@ export namespace Assets {
         std::vector<uint8_t>  cpuVertexBuffer; // [position][Normal][Tangent][...]
         std::vector<Mesh> meshes;
         std::vector<MeshGeometry> geometries;
+        std::vector<CameraNode> cameras;
         uint32_t vertexCount = 0;
         uint32_t materialCount = 0;
         uint32_t textureCount = 0;

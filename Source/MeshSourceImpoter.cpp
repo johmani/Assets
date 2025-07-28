@@ -3,6 +3,7 @@
 #include "cgltf.h"
 
 import Assets;
+import nvrhi;
 import HE;
 import Math;
 import std;
@@ -104,17 +105,20 @@ namespace Assets {
         }
     }
 
-    static void AppendNodes(Asset asset, Node& node, cgltf_node* cgltfNode, const cgltf_data* data, const std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
+    static void AppendNodes(Asset asset, Node& node, cgltf_node* cgltfNode, const cgltf_data* data)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
         if (cgltfNode->mesh)
         {
-            if (meshMap.contains(cgltfNode->mesh))
-            {
-                const auto& mesh = *meshMap.at(cgltfNode->mesh);
-                node.meshIndex = mesh.index;
-            }
+            node.index = (uint32_t)cgltf_mesh_index(data, cgltfNode->mesh);
+            node.type = NodeType::Mesh;
+        }
+
+        if (cgltfNode->camera)
+        {
+            node.index = (uint32_t)cgltf_camera_index(data, cgltfNode->camera);
+            node.type = NodeType::Camera;
         }
 
         auto& hierarchy = asset.Get<MeshSourecHierarchy>();
@@ -135,7 +139,7 @@ namespace Assets {
             Node& newNode = hierarchy.nodes[node.childrenOffset + i];
             cgltf_node* child = cgltfNode->children[i];
 
-            AppendNodes(asset, newNode, child, data, meshMap);
+            AppendNodes(asset, newNode, child, data);
         }
     }
 
@@ -180,7 +184,7 @@ namespace Assets {
         });
     }
 
-    static void AppendMeshes(cgltf_data* data, MeshSource& meshSource, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap, std::unordered_map<const cgltf_material*, Asset>& materials)
+    static void AppendMeshes(cgltf_data* data, MeshSource& meshSource, std::unordered_map<const cgltf_material*, Asset>& materials)
     {
         HE_PROFILE_SCOPE_COLOR(HE_PROFILE_COLOR);
 
@@ -296,7 +300,6 @@ namespace Assets {
             const cgltf_mesh& cltfMesh = data->meshes[mesh_idx];
 
             Mesh& mesh = meshSource.meshes.emplace_back();
-            meshMap[&cltfMesh] = &mesh;
 
             if (cltfMesh.name)
             {
@@ -792,7 +795,7 @@ namespace Assets {
         }
     }
 
-    static void AppendNodes(Asset asset, cgltf_data* data, std::unordered_map<const cgltf_mesh*, Mesh*>& meshMap)
+    static void AppendNodes(Asset asset, cgltf_data* data)
     {
         HE::Timer t;
 
@@ -818,10 +821,44 @@ namespace Assets {
             cgltf_node* cgltfNode = data->scene->nodes[i];
             Node& node = hierarchy.nodes[hierarchy.root.childrenOffset + i];
 
-            AppendNodes(asset, node, cgltfNode, data, meshMap);
+            AppendNodes(asset, node, cgltfNode, data);
         }
 
         HE_INFO("Import AppendNodes [{}ms]", t.ElapsedMilliseconds());
+    }
+
+    static void AppendCameras(Assets::MeshSource& meshSource, cgltf_data* data)
+    {
+        meshSource.cameras.reserve(data->cameras_count);
+
+        for (int i = 0; i < data->cameras_count; i++)
+        {
+            auto& camera = data->cameras[i];
+            switch (camera.type)
+            {
+            case cgltf_camera_type_perspective:
+            {
+                auto& c = meshSource.cameras.emplace_back();
+                if (camera.data.perspective.has_aspect_ratio)
+                    c.aspectRatio = camera.data.perspective.aspect_ratio;
+
+                if (c.hasZfar = camera.data.perspective.has_zfar)
+                    c.zFar = camera.data.perspective.zfar;
+
+                c.zNear = camera.data.perspective.znear;
+
+                float hfov = 2.0f * Math::atan(Math::tan(camera.data.perspective.yfov / 2.0f) * c.aspectRatio);
+                c.yfov = glm::degrees(hfov);
+
+                break;
+            }
+            case cgltf_camera_type_orthographic:
+            {
+                HE_WARN("cgltf_camera_type_orthographic not supported yet");
+                break;
+            }
+            }
+        }
     }
 
     Asset MeshSourceImporter::Import(AssetHandle handle, const std::filesystem::path& filePath)
@@ -859,7 +896,6 @@ namespace Assets {
         memset(assetDependencies.dependencies.data(), 0, assetDependencies.dependencies.size());
 
         std::unordered_map<const cgltf_material*, Asset> materials;
-        std::unordered_map<const cgltf_mesh*, Mesh*> meshMap;
 
         std::unordered_map<const cgltf_texture*, TextureInfo> textures;
         GetTexturesInfo(data, textures);
@@ -891,8 +927,9 @@ namespace Assets {
         }
 
         AppendMaterials(assetManager, data, materials, asset, meshSource.materialCount);
-        AppendMeshes(data, meshSource, meshMap, materials);
-        AppendNodes(asset, data, meshMap);
+        AppendMeshes(data, meshSource, materials);
+        AppendNodes(asset, data);
+        AppendCameras(meshSource, data);
 
         cgltf_free(data);
         assetState = AssetState::Loaded;
@@ -946,7 +983,6 @@ namespace Assets {
             HE::Jops::Taskflow tf;
 
             std::unordered_map<const cgltf_material*, Asset> materials;
-            std::unordered_map<const cgltf_mesh*, Mesh*> meshMap;
 
             std::vector<tf::Task> textureTasks;
             textureTasks.reserve(data->textures_count);
@@ -984,8 +1020,9 @@ namespace Assets {
             }
 
             AppendMaterials(assetManager, data, materials, asset, meshSource.materialCount);
-            AppendMeshes(data, meshSource, meshMap, materials);
-            AppendNodes(asset, data, meshMap);
+            AppendMeshes(data, meshSource, materials);
+            AppendNodes(asset, data);
+            AppendCameras(meshSource, data);
 
             auto finalTask = tf.emplace([this, asset, data]() {
 
