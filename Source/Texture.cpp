@@ -21,20 +21,24 @@ namespace Assets {
         auto& assetState = asset.Get<AssetState>();
         assetState = AssetState::Loading;
 
+        bool isHDR = filePath.extension() == ".hdr";
+
         HE::Image image(path);
         nvrhi::TextureDesc desc;
         desc.width = image.GetWidth();
         desc.height = image.GetHeight();
-        desc.format = nvrhi::Format::RGBA8_UNORM;
+        desc.format = isHDR ? nvrhi::Format::RGB32_FLOAT : nvrhi::Format::RGBA8_UNORM;
         desc.debugName = path.string();
+        desc.initialState = nvrhi::ResourceStates::ShaderResource;
+        desc.keepInitialState = true;
         texture.texture = assetManager->device->createTexture(desc);
+
+        int bytesPerPixel = isHDR ? 3 * sizeof(float) : 4;
+        int rowPitch = desc.width * bytesPerPixel;
 
         nvrhi::CommandListHandle commandList = assetManager->device->createCommandList({ .enableImmediateExecution = false });
         commandList->open();
-        commandList->beginTrackingTextureState(texture.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
-        commandList->writeTexture(texture.texture, 0, 0, image.GetData(), desc.width * 4);
-        commandList->setPermanentTextureState(texture.texture, nvrhi::ResourceStates::ShaderResource);
-        commandList->commitBarriers();
+        commandList->writeTexture(texture.texture, 0, 0, image.GetData(), rowPitch);
         commandList->close();
         assetManager->device->executeCommandList(commandList);
         assetManager->device->runGarbageCollection();
@@ -61,16 +65,20 @@ namespace Assets {
             HE::Image image(path);
             uint8_t* data = image.ExtractData();
 
+            bool isHDR = filePath.extension() == ".hdr";
+
             nvrhi::TextureDesc desc;
             desc.width = image.GetWidth();
             desc.height = image.GetHeight();
-            desc.format = nvrhi::Format::RGBA8_UNORM;
+            desc.format = isHDR ? nvrhi::Format::RGB32_FLOAT : nvrhi::Format::RGBA8_UNORM;
             desc.debugName = filePath.string();
+            desc.initialState = nvrhi::ResourceStates::ShaderResource;
+            desc.keepInitialState = true;
 
             Texture& texture = asset.Add<Texture>();
             texture.texture = assetManager->device->createTexture(desc);
 
-            HE::Jops::SubmitToMainThread([this, handle, data, desc]() {
+            HE::Jops::SubmitToMainThread([this, handle, data, desc, isHDR]() {
 
                 Asset asset = assetManager->FindAsset(handle);
                 auto& texture = asset.Get<Texture>();
@@ -78,11 +86,11 @@ namespace Assets {
 
                 nvrhi::CommandListHandle commandList = assetManager->device->createCommandList({ .enableImmediateExecution = false });
 
+                int bytesPerPixel = isHDR ? 3 * sizeof(float) : 4;
+                int rowPitch = desc.width * bytesPerPixel;
+
                 commandList->open();
-                commandList->beginTrackingTextureState(texture.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
-                commandList->writeTexture(texture.texture, 0, 0, data, desc.width * 4);
-                commandList->setPermanentTextureState(texture.texture, nvrhi::ResourceStates::ShaderResource);
-                commandList->commitBarriers();
+                commandList->writeTexture(texture.texture, 0, 0, data, rowPitch);
                 commandList->close();
                 
                 assetManager->device->executeCommandList(commandList);

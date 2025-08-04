@@ -168,18 +168,22 @@ namespace Assets {
 
     nvrhi::TextureHandle LoadTexture(const std::filesystem::path& filePath, nvrhi::IDevice* device, nvrhi::ICommandList* commandList)
     {
+        bool isHDR = filePath.extension() == ".hdr";
+
         HE::Image image(filePath);
         nvrhi::TextureDesc desc;
         desc.width = image.GetWidth();
         desc.height = image.GetHeight();
-        desc.format = nvrhi::Format::RGBA8_UNORM;
+        desc.format = isHDR ? nvrhi::Format::RGB32_FLOAT : nvrhi::Format::RGBA8_UNORM;
+        desc.initialState = nvrhi::ResourceStates::ShaderResource;
+        desc.keepInitialState = true;
         desc.debugName = filePath.string();
-
         auto texture = device->createTexture(desc);
-        commandList->beginTrackingTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
-        commandList->writeTexture(texture, 0, 0, image.GetData(), desc.width * 4);
-        commandList->setPermanentTextureState(texture, nvrhi::ResourceStates::ShaderResource);
-        commandList->commitBarriers();
+
+        int bytesPerPixel = isHDR ? 3 * sizeof(float) : 4;
+        int rowPitch = desc.width * bytesPerPixel;
+
+        commandList->writeTexture(texture, 0, 0, image.GetData(), rowPitch);
 
         return texture;
     }
@@ -192,13 +196,12 @@ namespace Assets {
         desc.width = image.GetWidth();
         desc.height = image.GetHeight();
         desc.format = nvrhi::Format::RGBA8_UNORM;
+        desc.initialState = nvrhi::ResourceStates::ShaderResource;
+        desc.keepInitialState = true;
         desc.debugName = name;
+        auto texture = device->createTexture(desc);
 
-        nvrhi::TextureHandle texture = device->createTexture(desc);
-        commandList->beginTrackingTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
         commandList->writeTexture(texture, 0, 0, image.GetData(), desc.width * 4);
-        commandList->setPermanentTextureState(texture, nvrhi::ResourceStates::ShaderResource);
-        commandList->commitBarriers();
 
         return texture;
     }
