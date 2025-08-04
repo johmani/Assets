@@ -371,16 +371,20 @@ namespace Assets {
             out << "\t\t\t}\n";
         }
 
-        if (entity.HasComponent<DynamicSkyLightComponent>())
+        if (entity.HasComponent<SkyLightComponent>())
         {
             out << "\t\t\t,\n";
 
-            auto& c = entity.GetComponent<DynamicSkyLightComponent>();
+            auto& c = entity.GetComponent<SkyLightComponent>();
 
-            out << "\t\t\t\"DynamicSkyLightComponent\" : {\n";
-            out << "\t\t\t\t\"color\" : " << c.groundColor << ",\n";
-            out << "\t\t\t\t\"color\" : " << c.horizonSkyColor << ",\n";
-            out << "\t\t\t\t\"color\" : " << c.zenithSkyColor << "\n";
+            out << "\t\t\t\"SkyLightComponent\" : {\n";
+            out << "\t\t\t\t\"groundColor\" : " << c.groundColor << ",\n";
+            out << "\t\t\t\t\"horizonSkyColor\" : " << c.horizonSkyColor << ",\n";
+            out << "\t\t\t\t\"zenithSkyColor\" : " << c.zenithSkyColor << "\n,";
+            
+            out << "\t\t\t\t\"textureHandle\" : " << c.textureHandle << "\n,";
+            out << "\t\t\t\t\"intensity\" : " << c.intensity << "\n";
+
             out << "\t\t\t}\n";
         }
     }
@@ -519,37 +523,43 @@ namespace Assets {
                 c.haloFalloff = (float)directionalLightComponent["haloFalloff"].get_double().value();
         }
 
-        const auto& dynamicSkyLightComponent = element["DynamicSkyLightComponent"];
-        if (!dynamicSkyLightComponent.error())
+        const auto& skyLightComponent = element["SkyLightComponent"];
+        if (!skyLightComponent.error())
         {
-            auto& c = deserializedEntity.AddComponent<DynamicSkyLightComponent>();
+            auto& c = deserializedEntity.AddComponent<SkyLightComponent>();
 
-            if (!dynamicSkyLightComponent["groundColor"].error())
+            if (!skyLightComponent["groundColor"].error())
             {
                 c.groundColor = {
-                    (float)dynamicSkyLightComponent["groundColor"].get_array().at(0).get_double().value(),
-                    (float)dynamicSkyLightComponent["groundColor"].get_array().at(1).get_double().value(),
-                    (float)dynamicSkyLightComponent["groundColor"].get_array().at(2).get_double().value()
+                    (float)skyLightComponent["groundColor"].get_array().at(0).get_double().value(),
+                    (float)skyLightComponent["groundColor"].get_array().at(1).get_double().value(),
+                    (float)skyLightComponent["groundColor"].get_array().at(2).get_double().value()
                 };
             }
 
-            if (!dynamicSkyLightComponent["horizonSkyColor"].error())
+            if (!skyLightComponent["horizonSkyColor"].error())
             {
                 c.horizonSkyColor = {
-                  (float)dynamicSkyLightComponent["horizonSkyColor"].get_array().at(0).get_double().value(),
-                  (float)dynamicSkyLightComponent["horizonSkyColor"].get_array().at(1).get_double().value(),
-                  (float)dynamicSkyLightComponent["horizonSkyColor"].get_array().at(2).get_double().value()
+                  (float)skyLightComponent["horizonSkyColor"].get_array().at(0).get_double().value(),
+                  (float)skyLightComponent["horizonSkyColor"].get_array().at(1).get_double().value(),
+                  (float)skyLightComponent["horizonSkyColor"].get_array().at(2).get_double().value()
                 };
             }
 
-            if (!dynamicSkyLightComponent["zenithSkyColor"].error())
+            if (!skyLightComponent["zenithSkyColor"].error())
             {
                 c.zenithSkyColor = {
-                    (float)dynamicSkyLightComponent["zenithSkyColor"].get_array().at(0).get_double().value(),
-                    (float)dynamicSkyLightComponent["zenithSkyColor"].get_array().at(1).get_double().value(),
-                    (float)dynamicSkyLightComponent["zenithSkyColor"].get_array().at(2).get_double().value()
+                    (float)skyLightComponent["zenithSkyColor"].get_array().at(0).get_double().value(),
+                    (float)skyLightComponent["zenithSkyColor"].get_array().at(1).get_double().value(),
+                    (float)skyLightComponent["zenithSkyColor"].get_array().at(2).get_double().value()
                 };
             }
+
+            if (!skyLightComponent["textureHandle"].error())
+                c.textureHandle = skyLightComponent["textureHandle"].get_uint64().value();
+
+            if (!skyLightComponent["intensity"].error())
+                c.intensity = (float)skyLightComponent["intensity"].get_double().value();
         }
     }
 
