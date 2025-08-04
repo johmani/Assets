@@ -55,7 +55,11 @@ namespace Assets {
         Math::float2 deltaUV2 = uv2 - uv0;
 
         // Compute the determinant (area of the UV triangle)
-        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+        float denom = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+        if (std::abs(denom) < 1e-6f)
+            return;
+
+        float f = 1.0f / denom;
 
         // Compute the tangent and bitangent vectors for the triangle
         tangent0.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
