@@ -696,13 +696,13 @@ namespace Assets {
 
                 if (cgltfMat.pbr_metallic_roughness.base_color_texture.texture)
                 {
-                    cgltf_size index = cgltfMat.pbr_metallic_roughness.base_color_texture.texture - data->textures;
+                    cgltf_size index = cgltf_texture_index(data, cgltfMat.pbr_metallic_roughness.base_color_texture.texture);
                     material.baseTextureHandle = dependencies[materialCount + index];
                 }
 
                 if (cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture)
                 {
-                    cgltf_size index = cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture - data->textures;
+                    cgltf_size index = cgltf_texture_index(data, cgltfMat.pbr_metallic_roughness.metallic_roughness_texture.texture);
                     material.metallicRoughnessTextureHandle = dependencies[materialCount + index];
                 }
 
@@ -726,7 +726,7 @@ namespace Assets {
 
                 if (cgltfMat.pbr_specular_glossiness.diffuse_texture.texture)
                 {
-                    cgltf_size index = cgltfMat.pbr_specular_glossiness.diffuse_texture.texture - data->textures;
+                    cgltf_size index = cgltf_texture_index(data, cgltfMat.pbr_specular_glossiness.diffuse_texture.texture);
                     material.baseTextureHandle = dependencies[materialCount + index];
                 }
 
@@ -750,14 +750,14 @@ namespace Assets {
 
                 if (cgltfMat.emissive_texture.texture)
                 {
-                    cgltf_size index = cgltfMat.emissive_texture.texture - data->textures;
+                    cgltf_size index = cgltf_texture_index(data, cgltfMat.emissive_texture.texture);
                     material.emissiveTextureHandle = dependencies[materialCount + index];
                 }
             }
 
             if (cgltfMat.normal_texture.texture)
             {
-                cgltf_size index = cgltfMat.normal_texture.texture - data->textures; // NOTE : DO NOT FORGET TO ADD materialCount
+                cgltf_size index = cgltf_texture_index(data, cgltfMat.normal_texture.texture); // NOTE : DO NOT FORGET TO ADD materialCount
                 material.normalTextureHandle = dependencies[materialCount + index];
             }
 
@@ -791,7 +791,7 @@ namespace Assets {
             }
 
             auto emissive_texture = cgltfMat.emissive_texture.texture;
-            if (cgltfMat.has_pbr_specular_glossiness && emissive_texture && textures.contains(emissive_texture))
+            if (emissive_texture && textures.contains(emissive_texture))
             {
                 auto& t = textures[cgltfMat.emissive_texture.texture];
                 t.isSRGB = true;
